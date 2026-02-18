@@ -27,12 +27,16 @@ def check_password():
     pwd = st.text_input("Password", type="password")
     
     if st.button("Login"):
-        ## Checks against secrets
-        if user == st.secrets["auth"]["username"] and pwd == st.secrets["auth"]["password"]:
-            st.session_state.password_correct = True
-            st.rerun()
-        else:
-            st.error("❌ Incorrect Username or Password")
+        try:
+            ## Checks against secrets
+            if user == st.secrets["auth"]["username"] and pwd == st.secrets["auth"]["password"]:
+                st.session_state.password_correct = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect Username or Password")
+        except KeyError:
+            st.error("❌ Secrets not configured. Please add [auth] section to secrets.toml")
+            
     return False
 
 if not check_password():
@@ -88,7 +92,6 @@ def get_data():
             "Dispute_Note", "Fiscal_Year"
         ])
 
-## --- ADD THIS BELOW get_data() ---
 def get_holdings():
     repo = get_repo()
     if not repo: return pd.DataFrame(columns=["Symbol", "Total_Qty", "Pledged_Qty", "LTP", "Haircut"])
@@ -137,12 +140,15 @@ def get_fiscal_year(date_obj):
 df = get_data()
 holdings_df = get_holdings()
 
-## Defaults
+## Defaults (Prevents NameError on empty data)
 net_cash_invested = 0.0
 tms_cash_balance = 0.0
-collateral_limit = 0.0
+tms_balance = 0.0 # Alias for tms_cash_balance for compatibility
+trading_power = 0.0
 utilization_rate = 0.0
 t0_due, t1_due, t2_due = 0.0, 0.0, 0.0
+net_due, payable_due, receivable_due = 0.0, 0.0, 0.0
+pending_df = pd.DataFrame()
 
 if not df.empty:
     ## A. Bank & Cash Logic
@@ -154,8 +160,9 @@ if not df.empty:
     tms_credits = df[df["Category"].isin(["DEPOSIT", "RECEIVABLE", "DIRECT_PAY"])]["Amount"].sum()
     tms_debits = df[df["Category"].isin(["WITHDRAW", "PAYABLE", "EXPENSE"])]["Amount"].sum()
     tms_cash_balance = tms_credits - tms_debits
+    tms_balance = tms_cash_balance # Set alias
 
-    ## C. The "Collateral Command Center" (New Feature)
+    ## C. The "Collateral Command Center"
     ## Formula: Cash Balance + (Pledged Stock Value * (1 - Haircut/100))
     non_cash_value = 0.0
     if not holdings_df.empty:
@@ -163,9 +170,7 @@ if not df.empty:
         holdings_df["Collateral_Val"] = holdings_df["Pledged_Qty"] * holdings_df["LTP"] * (1 - (holdings_df["Haircut"]/100))
         non_cash_value = holdings_df["Collateral_Val"].sum()
     
-    ## Total Buying Power
-    total_limit = tms_cash_balance + (non_cash_value * 4) # Assuming 1:4 leverage on Cash, varies by broker. 
-    ## simpler approach for Nepse: Limit = Cash + NonCash_Collateral_Value
+    ## Total Buying Power (Limit = Cash + NonCash_Collateral_Value)
     trading_power = tms_cash_balance + non_cash_value
     
     ## Utilization (Risk)
@@ -173,8 +178,14 @@ if not df.empty:
     used_collateral = abs(tms_cash_balance) if tms_cash_balance < 0 else 0
     utilization_rate = (used_collateral / non_cash_value * 100) if non_cash_value > 0 else 0
 
-    ## D. T+2 Settlement Radar (New Feature)
+    ## D. T+2 Settlement Radar
     pending_df = df[df["Status"] == "Pending"].copy()
+    
+    ## General Net Due
+    payable_due = pending_df[pending_df["Category"] == "PAYABLE"]["Amount"].sum()
+    receivable_due = pending_df[pending_df["Category"] == "RECEIVABLE"]["Amount"].sum()
+    net_due = payable_due - receivable_due
+
     if not pending_df.empty:
         today = datetime.now().date()
         pending_df["Due_Date"] = pd.to_datetime(pending_df["Due_Date"]).dt.date
@@ -190,7 +201,6 @@ if not df.empty:
         t0_due = calc_net(t0_df)
         t1_due = calc_net(t1_df)
         t2_due = calc_net(t2_df)
-
 
 
 ## --- 6. SIDEBAR NAVIGATION & TOOLS ---
@@ -213,8 +223,8 @@ with st.sidebar:
     with st.expander("🧮 Quick Calc: Load Amount"):
         st.caption("How much to load to clear dues?")
         
-        ## FIX: Ensure tms_balance exists, default to 0.0 if not
-        current_bal = float(tms_balance) if 'tms_balance' in locals() else 0.0
+        ## FIX: Ensure tms_balance exists and is safe
+        current_bal = float(tms_balance)
         
         calc_buy = st.number_input("Todays Buy", min_value=0.0, step=1000.0)
         calc_avail = st.number_input("Avail Collateral", value=current_bal)
@@ -301,6 +311,9 @@ if menu == "🏠 Dashboard":
     else:
         k4.metric("🛡️ Solvency", "N/A", help="Enter Bank Balance to calc")
     
+    st.markdown("---")
+    c1, c2, c3, c4 = st.columns(4)
+
     ## Metric 1: Real Money Involved
     c1.metric(
         "💵 Net Cash Invested", 
@@ -322,11 +335,11 @@ if menu == "🏠 Dashboard":
 
     ## Metric 4: Upcoming Settlements
     c4.metric(
-        "⚖️ Net Settlement (T+2)", 
+        "⚖️ Net Pending", 
         f"Rs {net_due:,.0f}", 
         delta=f"Pay: {payable_due:,.0f} | Rec: {receivable_due:,.0f}", 
         delta_color="inverse",
-        help="Net amount to settle in next 2 days."
+        help="Total Pending Payable - Total Pending Receivable"
     )
 
     st.markdown("---")
@@ -403,6 +416,7 @@ elif menu == "✍️ New Entry":
         cat = ""
         is_non_cash = False
         due_days = 0
+        risk_tag = ""
         
         st.markdown("### Transaction Details")
         
@@ -419,7 +433,7 @@ elif menu == "✍️ New Entry":
                 edis_check = st.checkbox("✅ Shares are in Demat & EDIS is ready?")
                 if not edis_check:
                     st.warning("⚠️ RISK ALERT: Selling shares without EDIS confirmation risks a 20% Close-out Fine.")
-                    desc = f"[RISK: NO EDIS] {desc}" # Auto-tag the description
+                    risk_tag = "[RISK: NO EDIS] "
             
         elif action_cat == "🔄 Fund Transfer (Collateral)":
             c_type = st.radio("Action", ["Load Collateral (Deposit)", "Refund Request (Withdraw)"], horizontal=True)
@@ -445,7 +459,7 @@ elif menu == "✍️ New Entry":
         ## Row 2: Amounts
         c3, c4, c5 = st.columns(3)
         amount = c3.number_input("Amount (Rs)", min_value=1.0, step=100.0)
-        desc = c4.text_input("Description", placeholder="e.g. NICA, ConnectIPS, Right Share")
+        desc_input = c4.text_input("Description", placeholder="e.g. NICA, ConnectIPS, Right Share")
         ref_id = c5.text_input("Ref ID", placeholder="Cheque No / Transaction ID")
         
         ## Submit
@@ -453,6 +467,9 @@ elif menu == "✍️ New Entry":
             due_date = date + timedelta(days=due_days)
             fy = get_fiscal_year(date)
             
+            ## Combine Risk Tag with Description
+            final_desc = risk_tag + desc_input
+
             ## Create Record
             new_row = pd.DataFrame([{
                 "Date": date,
@@ -462,7 +479,7 @@ elif menu == "✍️ New Entry":
                 "Status": "Pending",
                 "Due_Date": due_date,
                 "Ref_ID": ref_id,
-                "Description": desc,
+                "Description": final_desc,
                 "Is_Non_Cash": is_non_cash,
                 "Dispute_Note": "",
                 "Fiscal_Year": fy
@@ -481,49 +498,50 @@ elif menu == "📜 Ledger History":
     with st.expander("🔍 Filter & Search", expanded=True):
         f1, f2, f3 = st.columns(3)
         search = f1.text_input("Search Text")
-        cat_filter = f2.multiselect("Filter Category", df["Category"].unique())
+        cat_filter = f2.multiselect("Filter Category", df["Category"].unique() if not df.empty else [])
         stat_filter = f3.selectbox("Status", ["All", "Pending", "Cleared"])
         
     ## Apply Filters
     view_df = df.copy()
-    if search: view_df = view_df[view_df["Description"].str.contains(search, case=False, na=False)]
-    if cat_filter: view_df = view_df[view_df["Category"].isin(cat_filter)]
-    if stat_filter != "All": view_df = view_df[view_df["Status"] == stat_filter]
-    
-    ## Sort by Date Descending
-    view_df = view_df.sort_values("Date", ascending=False)
-    
-    ## Visual Styling for Table
-    def highlight_rows(row):
-        ## Red text for Pending
-        if row["Status"] == "Pending": return ["color: #d63384; font-weight: bold"] * len(row)
-        return [""] * len(row)
+    if not view_df.empty:
+        if search: view_df = view_df[view_df["Description"].str.contains(search, case=False, na=False)]
+        if cat_filter: view_df = view_df[view_df["Category"].isin(cat_filter)]
+        if stat_filter != "All": view_df = view_df[view_df["Status"] == stat_filter]
+        
+        ## Sort by Date Descending
+        view_df = view_df.sort_values("Date", ascending=False)
+        
+        ## Visual Styling for Table
+        def highlight_rows(row):
+            ## Red text for Pending
+            if row["Status"] == "Pending": return ["color: #d63384; font-weight: bold"] * len(row)
+            return [""] * len(row)
 
-    st.dataframe(
-        view_df.style.apply(highlight_rows, axis=1).format({"Amount": "Rs {:,.2f}"}),
-        use_container_width=True,
-        height=600
-    )
-    
-    ## Export
-    csv = view_df.to_csv(index=False).encode('utf-8')
-    st.download_button("⬇️ Download CSV", csv, "tms_ledger.csv", "text/csv")
+        st.dataframe(
+            view_df.style.apply(highlight_rows, axis=1).format({"Amount": "Rs {:,.2f}"}),
+            use_container_width=True,
+            height=600
+        )
+        
+        ## Export
+        csv = view_df.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ Download CSV", csv, "tms_ledger.csv", "text/csv")
+    else:
+        st.info("No records found.")
 
 ## >>> PAGE: VISUALS <<<
 elif menu == "📊 Analytics":
     st.header("📊 Financial Analytics")
-    ## --- COST OF TRADING (CHURN) ---
-    total_turnover = df[df["Category"].isin(["PAYABLE", "RECEIVABLE"])]["Amount"].sum()
-    total_expenses = df[df["Category"] == "EXPENSE"]["Amount"].sum()
+    
+    if not df.empty:
+        ## --- COST OF TRADING (CHURN) ---
+        total_turnover = df[df["Category"].isin(["PAYABLE", "RECEIVABLE"])]["Amount"].sum()
+        total_expenses = df[df["Category"] == "EXPENSE"]["Amount"].sum()
+            
+        if total_turnover > 0:
+            churn_cost = (total_expenses / total_turnover) * 100
+            st.metric("📉 Cost of Trading (Churn)", f"{churn_cost:.2f}%", help="Expenses as % of Total Volume. Lower is better.")
         
-    if total_turnover > 0:
-        churn_cost = (total_expenses / total_turnover) * 100
-        st.metric("📉 Cost of Trading (Churn)", f"{churn_cost:.2f}%", help="Expenses as % of Total Volume. Lower is better.")
-    
-    
-    if df.empty:
-        st.warning("No data available to visualize.")
-    else:
         tab1, tab2 = st.tabs(["📈 Cash Flow", "🍰 Portfolio Breakdown"])
         
         with tab1:
@@ -551,6 +569,8 @@ elif menu == "📊 Analytics":
                     st.plotly_chart(fig_exp, use_container_width=True)
                 else:
                     st.info("No expenses recorded.")
+    else:
+        st.warning("No data available to visualize.")
 
 ## >>> PAGE: MANAGE DATA <<<
 elif menu == "🛠️ Manage Data":
