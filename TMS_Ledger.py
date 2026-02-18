@@ -13,6 +13,32 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+## --- AUTHENTICATION ---
+def check_password():
+    """Returns `True` if the user had the correct password."""
+    if "password_correct" not in st.session_state:
+        st.session_state.password_correct = False
+
+    if st.session_state.password_correct:
+        return True
+    
+    st.title("🔒 TMS Ledger Login")
+    user = st.text_input("Username")
+    pwd = st.text_input("Password", type="password")
+    
+    if st.button("Login"):
+        ## Checks against secrets
+        if user == st.secrets["auth"]["username"] and pwd == st.secrets["auth"]["password"]:
+            st.session_state.password_correct = True
+            st.rerun()
+        else:
+            st.error("❌ Incorrect Username or Password")
+    return False
+
+if not check_password():
+    st.stop()
+
+
 ## --- 2. CUSTOM CSS FOR UI POLISH ---
 st.markdown("""
 <style>
@@ -92,41 +118,35 @@ df = get_data()
 
 if not df.empty:
     ## A. Bank Perspective (Real Cash Flow)
-    ## Cash OUT: Deposits (Real), Direct Payments (EOD), IPOs, Expenses
     money_out = df[
         (df["Category"].isin(["DEPOSIT", "DIRECT_PAY", "PRIMARY_INVEST", "EXPENSE"])) & 
         (df["Is_Non_Cash"] == False)
     ]["Amount"].sum()
     
-    ## Cash IN: Withdrawals
     money_in = df[df["Category"] == "WITHDRAW"]["Amount"].sum()
-    
-    ## Net Cash Invested: The "Truth" of your wallet
     net_cash_invested = money_out - money_in
     
     ## B. TMS Perspective (Collateral & Buying Power)
-    ## Credits (Increases Limit): Deposits (Real+NonCash), Sells (Receivables), Direct Payments
     tms_credits = df[df["Category"].isin(["DEPOSIT", "RECEIVABLE", "DIRECT_PAY"])]["Amount"].sum()
-    
-    ## Debits (Decreases Limit): Withdrawals, Buys (Payables), Expenses
     tms_debits = df[df["Category"].isin(["WITHDRAW", "PAYABLE", "EXPENSE"])]["Amount"].sum()
-    
-    ## Current TMS Balance (What Broker sees)
     tms_balance = tms_credits - tms_debits
 
     ## C. Settlement Status
-    pending_df = df[df["Status"] == "Pending"]
+    pending_df = df[df["Status"] == "Pending"]  ## <--- THIS WAS THE ISSUE
     payable_due = pending_df[pending_df["Category"] == "PAYABLE"]["Amount"].sum()
     receivable_due = pending_df[pending_df["Category"] == "RECEIVABLE"]["Amount"].sum()
-    net_due = payable_due - receivable_due # Positive means you owe money
+    net_due = payable_due - receivable_due 
 
 else:
-    ## Default values for first run
+    ## Default values for first run (Empty State)
     net_cash_invested = 0
     tms_balance = 0
     payable_due = 0
     receivable_due = 0
     net_due = 0
+    pending_df = pd.DataFrame() ## <--- FIX: Initialize empty DataFrame here
+
+
 
 ## --- 6. SIDEBAR NAVIGATION & TOOLS ---
 with st.sidebar:
