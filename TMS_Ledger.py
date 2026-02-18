@@ -88,6 +88,26 @@ def get_data():
             "Dispute_Note", "Fiscal_Year"
         ])
 
+## --- ADD THIS BELOW get_data() ---
+def get_holdings():
+    repo = get_repo()
+    if not repo: return pd.DataFrame(columns=["Symbol", "Total_Qty", "Pledged_Qty", "LTP", "Haircut"])
+    try:
+        file = repo.get_contents("tms_holdings.csv")
+        return pd.read_csv(StringIO(file.decoded_content.decode()))
+    except:
+        return pd.DataFrame(columns=["Symbol", "Total_Qty", "Pledged_Qty", "LTP", "Haircut"])
+
+def save_holdings(df):
+    repo = get_repo()
+    if not repo: return
+    csv_content = df.to_csv(index=False)
+    try:
+        file = repo.get_contents("tms_holdings.csv")
+        repo.update_file(file.path, "Update Holdings", csv_content, file.sha)
+    except:
+        repo.create_file("tms_holdings.csv", "Create Holdings", csv_content)
+
 def save_data(df):
     ## Saves the DataFrame back to GitHub CSV
     repo = get_repo()
@@ -113,38 +133,63 @@ def get_fiscal_year(date_obj):
     if month >= 7: return f"{year}/{year+1}"
     return f"{year-1}/{year}"
 
-## --- 5. DATA LOGIC & CALCULATIONS ---
+## --- 5. DATA LOGIC & CALCULATIONS (UPGRADED) ---
 df = get_data()
+holdings_df = get_holdings()
+
+## Defaults
+net_cash_invested = 0.0
+tms_cash_balance = 0.0
+collateral_limit = 0.0
+utilization_rate = 0.0
+t0_due, t1_due, t2_due = 0.0, 0.0, 0.0
 
 if not df.empty:
-    ## A. Bank Perspective (Real Cash Flow)
-    money_out = df[
-        (df["Category"].isin(["DEPOSIT", "DIRECT_PAY", "PRIMARY_INVEST", "EXPENSE"])) & 
-        (df["Is_Non_Cash"] == False)
-    ]["Amount"].sum()
-    
+    ## A. Bank & Cash Logic
+    money_out = df[(df["Category"].isin(["DEPOSIT", "DIRECT_PAY", "PRIMARY_INVEST", "EXPENSE"])) & (df["Is_Non_Cash"] == False)]["Amount"].sum()
     money_in = df[df["Category"] == "WITHDRAW"]["Amount"].sum()
     net_cash_invested = money_out - money_in
     
-    ## B. TMS Perspective (Collateral & Buying Power)
+    ## B. TMS "Cash" Balance (Ledger Balance)
     tms_credits = df[df["Category"].isin(["DEPOSIT", "RECEIVABLE", "DIRECT_PAY"])]["Amount"].sum()
     tms_debits = df[df["Category"].isin(["WITHDRAW", "PAYABLE", "EXPENSE"])]["Amount"].sum()
-    tms_balance = tms_credits - tms_debits
+    tms_cash_balance = tms_credits - tms_debits
 
-    ## C. Settlement Status
-    pending_df = df[df["Status"] == "Pending"]  ## <--- THIS WAS THE ISSUE
-    payable_due = pending_df[pending_df["Category"] == "PAYABLE"]["Amount"].sum()
-    receivable_due = pending_df[pending_df["Category"] == "RECEIVABLE"]["Amount"].sum()
-    net_due = payable_due - receivable_due 
+    ## C. The "Collateral Command Center" (New Feature)
+    ## Formula: Cash Balance + (Pledged Stock Value * (1 - Haircut/100))
+    non_cash_value = 0.0
+    if not holdings_df.empty:
+        ## Calculate value of pledged shares
+        holdings_df["Collateral_Val"] = holdings_df["Pledged_Qty"] * holdings_df["LTP"] * (1 - (holdings_df["Haircut"]/100))
+        non_cash_value = holdings_df["Collateral_Val"].sum()
+    
+    ## Total Buying Power
+    total_limit = tms_cash_balance + (non_cash_value * 4) # Assuming 1:4 leverage on Cash, varies by broker. 
+    ## simpler approach for Nepse: Limit = Cash + NonCash_Collateral_Value
+    trading_power = tms_cash_balance + non_cash_value
+    
+    ## Utilization (Risk)
+    ## If Ledger is negative, you are using collateral.
+    used_collateral = abs(tms_cash_balance) if tms_cash_balance < 0 else 0
+    utilization_rate = (used_collateral / non_cash_value * 100) if non_cash_value > 0 else 0
 
-else:
-    ## Default values for first run (Empty State)
-    net_cash_invested = 0
-    tms_balance = 0
-    payable_due = 0
-    receivable_due = 0
-    net_due = 0
-    pending_df = pd.DataFrame() ## <--- FIX: Initialize empty DataFrame here
+    ## D. T+2 Settlement Radar (New Feature)
+    pending_df = df[df["Status"] == "Pending"].copy()
+    if not pending_df.empty:
+        today = datetime.now().date()
+        pending_df["Due_Date"] = pd.to_datetime(pending_df["Due_Date"]).dt.date
+        
+        ## Filter by Day
+        t0_df = pending_df[pending_df["Due_Date"] <= today]
+        t1_df = pending_df[pending_df["Due_Date"] == today + timedelta(days=1)]
+        t2_df = pending_df[pending_df["Due_Date"] >= today + timedelta(days=2)]
+        
+        ## Calculate Net Flow (Receivable is +, Payable is -)
+        def calc_net(d): return d[d["Category"]=="RECEIVABLE"]["Amount"].sum() - d[d["Category"]=="PAYABLE"]["Amount"].sum()
+        
+        t0_due = calc_net(t0_df)
+        t1_due = calc_net(t1_df)
+        t2_due = calc_net(t2_df)
 
 
 
@@ -174,14 +219,80 @@ with st.sidebar:
         else:
             st.success("Covered by Collateral")
 
+    ## --- SIDEBAR ADDITION: STOCK INVENTORY ---
+    with st.expander("📦 Portfolio & Collateral"):
+        st.caption("Manage Pledged Shares for Limit Calc")
+        
+        h_sym = st.text_input("Symbol", placeholder="NICA").upper()
+        c1, c2 = st.columns(2)
+        h_qty = c1.number_input("Pledged Qty", min_value=0)
+        h_ltp = c2.number_input("LTP", min_value=0.0)
+        
+        if st.button("Update Stock"):
+            curr_h = get_holdings()
+            ## Remove existing if exists
+            curr_h = curr_h[curr_h["Symbol"] != h_sym]
+            ## Add new
+            new_h = pd.DataFrame([{
+                "Symbol": h_sym, "Total_Qty": h_qty, "Pledged_Qty": h_qty, 
+                "LTP": h_ltp, "Haircut": 25 # Default 25% Haircut
+            }])
+            curr_h = pd.concat([curr_h, new_h], ignore_index=True)
+            save_holdings(curr_h)
+            st.success(f"Updated {h_sym}")
+            st.rerun()
+            
+        if not holdings_df.empty:
+            st.dataframe(holdings_df[["Symbol", "Pledged_Qty", "LTP"]], height=150)
+
 ## --- 7. MAIN PAGES ---
 
 ## >>> PAGE: DASHBOARD <<<
 if menu == "🏠 Dashboard":
     st.title("🏦 Financial Command Center")
     
-    ## Row 1: The "Big Numbers"
-    c1, c2, c3, c4 = st.columns(4)
+    ## --- DASHBOARD ROW 1: SOLVENCY & SETTLEMENT ---
+    st.markdown("### 📡 T+2 Settlement Radar")
+    k1, k2, k3, k4 = st.columns(4)
+    
+    ## 1. TODAY (Urgent)
+    k1.metric(
+        "📅 Today (Due)", 
+        f"Rs {abs(t0_due):,.0f}", 
+        delta="Pay Now" if t0_due < 0 else "Receive", 
+        delta_color="inverse" if t0_due < 0 else "normal",
+        help="Net Settlement amount required by EOD today."
+    )
+    
+    ## 2. TOMORROW (Planning)
+    k2.metric(
+        "📆 Tomorrow (T+1)", 
+        f"Rs {t1_due:,.0f}", 
+        delta_color="off",
+        help="Projected settlement for tomorrow."
+    )
+    
+    ## 3. TRADING POWER (The Limit)
+    k3.metric(
+        "🔋 Trading Limit", 
+        f"Rs {trading_power:,.0f}", 
+        delta=f"{utilization_rate:.1f}% Used",
+        delta_color="inverse" if utilization_rate > 90 else "normal",
+        help="Cash Balance + Non-Cash Collateral Value"
+    )
+    
+    ## 4. SOLVENCY RATIO
+    ## You enter your actual bank balance manually here for the check
+    bank_bal = st.number_input("Enter Bank Balance for Check:", value=0.0, label_visibility="collapsed", placeholder="Bank Balance")
+    if bank_bal > 0:
+        total_obligation = abs(tms_cash_balance) if tms_cash_balance < 0 else 0
+        ratio = bank_bal / total_obligation if total_obligation > 0 else 999
+        if ratio < 1:
+            k4.error(f"⚠️ INSOLVENT (Ratio: {ratio:.2f})")
+        else:
+            k4.metric("🛡️ Solvency", "Safe", delta=f"{ratio:.1f}x Coverage")
+    else:
+        k4.metric("🛡️ Solvency", "N/A", help="Enter Bank Balance to calc")
     
     ## Metric 1: Real Money Involved
     c1.metric(
@@ -288,11 +399,20 @@ elif menu == "✍️ New Entry":
         
         st.markdown("### Transaction Details")
         
+
         if action_cat == "📈 Buy/Sell Shares (TMS)":
             c_type = st.radio("Action", ["Buy Shares (Payable)", "Sell Shares (Receivable)"], horizontal=True)
             txn_type = c_type
             cat = "PAYABLE" if "Buy" in c_type else "RECEIVABLE"
             due_days = 2 if "Buy" in c_type else 3
+            
+            ## NEW: EDIS Safety Check
+            if "Sell" in c_type:
+                st.markdown("#### 🛡️ EDIS Safety Check")
+                edis_check = st.checkbox("✅ Shares are in Demat & EDIS is ready?")
+                if not edis_check:
+                    st.warning("⚠️ RISK ALERT: Selling shares without EDIS confirmation risks a 20% Close-out Fine.")
+                    desc = f"[RISK: NO EDIS] {desc}" # Auto-tag the description
             
         elif action_cat == "🔄 Fund Transfer (Collateral)":
             c_type = st.radio("Action", ["Load Collateral (Deposit)", "Refund Request (Withdraw)"], horizontal=True)
@@ -385,6 +505,14 @@ elif menu == "📜 Ledger History":
 ## >>> PAGE: VISUALS <<<
 elif menu == "📊 Analytics":
     st.header("📊 Financial Analytics")
+    ## --- COST OF TRADING (CHURN) ---
+        total_turnover = df[df["Category"].isin(["PAYABLE", "RECEIVABLE"])]["Amount"].sum()
+        total_expenses = df[df["Category"] == "EXPENSE"]["Amount"].sum()
+        
+        if total_turnover > 0:
+            churn_cost = (total_expenses / total_turnover) * 100
+            st.metric("📉 Cost of Trading (Churn)", f"{churn_cost:.2f}%", help="Expenses as % of Total Volume. Lower is better.")
+    
     
     if df.empty:
         st.warning("No data available to visualize.")
