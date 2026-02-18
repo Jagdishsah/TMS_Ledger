@@ -207,17 +207,24 @@ with st.sidebar:
     ])
     
     st.markdown("---")
+
     
     ## Quick Calculator Tool
     with st.expander("🧮 Quick Calc: Load Amount"):
         st.caption("How much to load to clear dues?")
+        
+        ## FIX: Ensure tms_balance exists, default to 0.0 if not
+        current_bal = float(tms_balance) if 'tms_balance' in locals() else 0.0
+        
         calc_buy = st.number_input("Todays Buy", min_value=0.0, step=1000.0)
-        calc_avail = st.number_input("Avail Collateral", value=float(tms_balance))
+        calc_avail = st.number_input("Avail Collateral", value=current_bal)
+        
         needed = calc_buy - calc_avail
         if needed > 0:
             st.error(f"Load: Rs {needed:,.0f}")
         else:
             st.success("Covered by Collateral")
+    
 
     ## --- SIDEBAR ADDITION: STOCK INVENTORY ---
     with st.expander("📦 Portfolio & Collateral"):
