@@ -506,12 +506,12 @@ elif menu == "📜 Ledger History":
 elif menu == "📊 Analytics":
     st.header("📊 Financial Analytics")
     ## --- COST OF TRADING (CHURN) ---
-        total_turnover = df[df["Category"].isin(["PAYABLE", "RECEIVABLE"])]["Amount"].sum()
-        total_expenses = df[df["Category"] == "EXPENSE"]["Amount"].sum()
+    total_turnover = df[df["Category"].isin(["PAYABLE", "RECEIVABLE"])]["Amount"].sum()
+    total_expenses = df[df["Category"] == "EXPENSE"]["Amount"].sum()
         
-        if total_turnover > 0:
-            churn_cost = (total_expenses / total_turnover) * 100
-            st.metric("📉 Cost of Trading (Churn)", f"{churn_cost:.2f}%", help="Expenses as % of Total Volume. Lower is better.")
+    if total_turnover > 0:
+        churn_cost = (total_expenses / total_turnover) * 100
+        st.metric("📉 Cost of Trading (Churn)", f"{churn_cost:.2f}%", help="Expenses as % of Total Volume. Lower is better.")
     
     
     if df.empty:
