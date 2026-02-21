@@ -1,4 +1,8 @@
 Date,Type,Category,Amount,Status,Due_Date,Ref_ID,Description,Is_Non_Cash,Dispute_Note,Fiscal_Year
+2026-01-01,Load Collateral (Deposit),DEPOSIT,3570,Cleared,2026-01-01,,IPO and FPO,False,,2025/2026
+2026-01-01,Buy Shares (Payable),PAYABLE,3570,Cleared,2026-01-01,,IPO and FPO Buy,False,,2025/2026
+2026-01-02,Sell Shares (Receivable),RECEIVABLE,12852.21,Cleared,2026-01-02,,Sell Dhel and Bandipur,False,,2025/2026
+2026-01-02,Refund Request (Withdraw),WITHDRAW,12852.21,Cleared,2026-01-02,,Sell IPO FPO,False,,2025/2026
 2026-01-08,Load Collateral (Deposit),DEPOSIT,10824.21,Cleared,2026-01-08,568832045,My First Collateral For TMS,False,,2025/2026
 2026-01-18,Buy Shares (Payable),PAYABLE,4544.89,Cleared,2026-01-20,TMS 2026011805015368,ULHC*10 Buy ULHC For Sideway Scalping,False,,2025/2026
 2026-01-20,Buy Shares (Payable),PAYABLE,3759.95,Cleared,2026-01-22,TMS 2026012005031079,TPC*10 Buy TPC With Long Term Trend,False,,2025/2026
