@@ -1,3 +1,7 @@
 Date,Type,Category,Amount,Status,Due_Date,Ref_ID,Description,Is_Non_Cash,Dispute_Note,Fiscal_Year
-2026-02-18,IPO Application,PRIMARY_INVEST,1000.0,Cleared,2026-02-18,Hello,HBL,False,,2025/2026
-2026-02-18,Load Collateral (Deposit),DEPOSIT,10000.0,Cleared,2026-02-18,a,Load,False,,2025/2026
+2026-02-21,Load Collateral (Deposit),DEPOSIT,1100.0,Cleared,2026-02-21,Migrated,Global Deposit,False,,2025/2026
+2026-02-21,Buy Shares (Payable),PAYABLE,4372.24,Pending,2026-02-23,Migrated,Bought SGHC via Collateral,False,,2025/2026
+2026-02-21,Sell Shares (Receivable),RECEIVABLE,2177.67,Pending,2026-02-24,Migrated,[RISK: NO EDIS] Sold NHPC via Collateral,False,,2025/2026
+2026-02-21,Sell Shares (Receivable),RECEIVABLE,4916.4,Pending,2026-02-24,Migrated,[RISK: NO EDIS] Sold KKHC via Collateral,False,,2025/2026
+2026-02-21,Load Collateral (Deposit),DEPOSIT,1293.42,Cleared,2026-02-21,Migrated,Global Deposit,False,,2025/2026
+2026-02-21,Buy Shares (Payable),PAYABLE,5114.01,Pending,2026-02-23,Migrated,Bought ULHC via Collateral,False,,2025/2026
