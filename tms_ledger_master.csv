@@ -1,7 +1,14 @@
 Date,Type,Category,Amount,Status,Due_Date,Ref_ID,Description,Is_Non_Cash,Dispute_Note,Fiscal_Year
-2026-02-21,Load Collateral (Deposit),DEPOSIT,1100.0,Cleared,2026-02-21,Migrated,Global Deposit,False,,2025/2026
-2026-02-21,Buy Shares (Payable),PAYABLE,4372.24,Pending,2026-02-23,Migrated,Bought SGHC via Collateral,False,,2025/2026
-2026-02-21,Sell Shares (Receivable),RECEIVABLE,2177.67,Pending,2026-02-24,Migrated,[RISK: NO EDIS] Sold NHPC via Collateral,False,,2025/2026
-2026-02-21,Sell Shares (Receivable),RECEIVABLE,4916.4,Pending,2026-02-24,Migrated,[RISK: NO EDIS] Sold KKHC via Collateral,False,,2025/2026
-2026-02-21,Load Collateral (Deposit),DEPOSIT,1293.42,Cleared,2026-02-21,Migrated,Global Deposit,False,,2025/2026
-2026-02-21,Buy Shares (Payable),PAYABLE,5114.01,Pending,2026-02-23,Migrated,Bought ULHC via Collateral,False,,2025/2026
+2026-01-08,Load Collateral (Deposit),DEPOSIT,10824.21,Cleared,2026-01-08,568832045,My First Collateral For TMS,False,,2025/2026
+2026-01-18,Buy Shares (Payable),PAYABLE,4544.89,Cleared,2026-01-20,TMS 2026011805015368,ULHC*10 Buy ULHC For Sideway Scalping,False,,2025/2026
+2026-01-20,Buy Shares (Payable),PAYABLE,3759.95,Cleared,2026-01-22,TMS 2026012005031079,TPC*10 Buy TPC With Long Term Trend,False,,2025/2026
+2026-01-29,Buy Shares (Payable),PAYABLE,9501.25,Cleared,2026-01-31,TMS 2026012005031079,[KKHC+NHPC]*20 Circuit Chase,False,,2025/2026
+2026-01-29,Load Collateral (Deposit),DEPOSIT,7000.0,Cleared,2026-01-29,587404287,Depo For NHPC KKHC,False,,2025/2026
+2026-01-29,Sell Shares (Receivable),RECEIVABLE,3820.59,Cleared,2026-02-01,TMS 2026012905016435,TPC*10 Sold TPC at Just Above BE,False,,2025/2026
+2026-02-04,Refund Request (Withdraw),WITHDRAW,3820.59,Cleared,2026-02-04,,TPC Capital Withdraw,False,,2025/2026
+2026-02-04,Buy Shares (Payable),PAYABLE,5114.01,Cleared,2026-02-06,,ULHC*10 TMS 58 Continous Accumulation,False,,2025/2026
+2026-02-04,Load Collateral (Deposit),DEPOSIT,1293.42,Cleared,2026-02-04,WWKXGFPTX19,Payment For ULHC,False,,2025/2026
+2026-02-05,Sell Shares (Receivable),RECEIVABLE,4916.4,Cleared,2026-02-08,,KKHC*20 Sell KKHC Near BE Without Realizing Circuit {Scary Cat Effect},False,,2025/2026
+2026-02-09,Sell Shares (Receivable),RECEIVABLE,2177.67,Cleared,2026-02-12,,NHPC * 10 Partial Sell Near BE to Get Capital Back,False,,2025/2026
+2026-02-10,Buy Shares (Payable),PAYABLE,4372.24,Cleared,2026-02-12,,SGHC * 10 TMS 58 Accumulation Trap,False,,2025/2026
+2026-02-13,Load Collateral (Deposit),DEPOSIT,1100.0,Cleared,2026-02-13,IOAQPW0136K,Due Clearance,False,,2025/2026
