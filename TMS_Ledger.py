@@ -216,7 +216,8 @@ with st.sidebar:
         "🛠️ Manage Data",
         "📈 Data Analysis",
         "🤖 AI Advisor",
-        "Stock Graph"
+        "Stock Graph",
+        "Elliott Wave Scanner"
     ])
     
     st.markdown("---")
@@ -671,3 +672,20 @@ elif menu == "Stock Graph":
     except Exception as e:
         if type(e).__name__ not in ["StopException", "RerunException"]:
             st.error(f"❌ Error loading Stock Graph: {e}")
+
+
+
+elif menu == "Elliott Wave Scanner":
+    st.header("🌊 Algorithmic Elliott Wave Scanner")
+
+    try:
+        # Run the Elliot_Wave.py file in an isolated namespace
+        namespace_ew = globals().copy()
+        namespace_ew["__name__"] = "elliott_wave_module"
+        with open("Stock_Graph/Elliot_Wave.py", encoding="utf-8") as file:
+            exec(compile(file.read(), "Elliot_Wave.py", 'exec'), namespace_ew)
+    except FileNotFoundError:
+        st.error("❌ Could not find `Stock_Graph/Elliot_Wave.py`. Please create the file.")
+    except Exception as e:
+        if type(e).__name__ not in ["StopException", "RerunException"]:
+            st.error(f"❌ Error loading Elliott Wave Scanner: {e}")
