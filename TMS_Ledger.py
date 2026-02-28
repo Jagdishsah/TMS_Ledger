@@ -215,7 +215,8 @@ with st.sidebar:
         "📊 Analytics", 
         "🛠️ Manage Data",
         "📈 Data Analysis",
-        "🤖 AI Advisor"
+        "🤖 AI Advisor",
+        "Stock Graph"
     ])
     
     st.markdown("---")
@@ -653,3 +654,20 @@ elif menu == "🛠️ Manage Data":
                     st.rerun()
     else:
         st.write("No data to manage.")
+
+
+elif menu == "Stock Graph":
+    st.header("📊 Interactive Stock Graph")
+
+    try:
+        # Run the Graph.py file from inside the Stock_Graph folder
+        namespace_graph = globals().copy()
+        namespace_graph["__name__"] = "stock_graph_module"
+        with open("Stock_Graph/Graph.py", encoding="utf-8") as file:
+            code = compile(file.read(), "Graph.py", 'exec')
+            exec(code, namespace_graph)
+    except FileNotFoundError:
+        st.error("❌ Could not find `Stock_Graph/Graph.py`. Please create the folder and file.")
+    except Exception as e:
+        if type(e).__name__ not in ["StopException", "RerunException"]:
+            st.error(f"❌ Error loading Stock Graph: {e}")
