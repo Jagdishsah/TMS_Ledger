@@ -15,7 +15,7 @@ st.title("📈 Advanced Data Analysis Studio")
 st.markdown("Analyze Accumulation/Distribution, visualize aggression, and manage your broker data.")
 
 # --- TABS FOR NAVIGATION ---
-tab1, tab2 = st.tabs(["📤 Upload & Analyze", "📂 Browse Saved Data"])
+tab1, tab2, tab3 = st.tabs(["📤 Upload & Analyze", "📂 Browse Saved Data", "🚀 Advanced Analysis"])
 
 with tab1:
     # --- 1. FILE UPLOAD & PROCESSING ---
@@ -236,3 +236,18 @@ with tab2:
             
     except Exception as e:
         st.error("❌ Could not authenticate with GitHub to load files. Check your secrets.")
+
+
+# --- 8. ADVANCED ANALYSIS TAB ---
+with tab3:
+    try:
+        # Dynamically execute the Advanced Analysis script
+        file_path = os.path.join(SAVE_DIR, "Advanced_analysis.py")
+        with open(file_path, encoding="utf-8") as f:
+            code = compile(f.read(), "Advanced_analysis.py", 'exec')
+            exec(code, globals())
+    except FileNotFoundError:
+        st.info("🚀 Creating Advanced Analysis Module...")
+        st.warning("Please save the `Advanced_analysis.py` file inside the `Data_analysis` folder to unlock this tab.")
+    except Exception as e:
+        st.error(f"❌ Error loading Advanced Analysis: {e}")
