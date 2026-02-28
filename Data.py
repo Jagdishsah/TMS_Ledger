@@ -7,31 +7,27 @@ import numpy as np
 from github import Github
 import io
 
-# Ensure the Data_analysis directory exists locally for temporary caching
 SAVE_DIR = "Data_analysis"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 st.title("📈 Advanced Data Analysis Studio")
-st.markdown("Analyze Accumulation/Distribution, visualize aggression, and manage your broker data.")
 
 # --- TABS FOR NAVIGATION ---
-tab1, tab2, tab3 = st.tabs(["📤 Upload & Analyze", "📂 Browse Saved Data", "🚀 Advanced Analysis"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📤 Upload & Analyze", 
+    "📂 Browse Saved Data", 
+    "🚀 Advanced Analysis", 
+    "📊 Visualization",
+    "🤖 AI Advisor"
+])
 
 with tab1:
-    # --- 1. FILE UPLOAD & PROCESSING ---
     uploaded_file = st.file_uploader("Upload raw data file (JSON or TXT)", type=["txt", "json"])
-
     if uploaded_file is not None:
         try:
-            # Load the JSON data
             raw_data = json.load(uploaded_file)
-            
-            if "data" in raw_data:
-                df = pd.DataFrame(raw_data["data"])
-            else:
-                df = pd.DataFrame(raw_data)
+            df = pd.DataFrame(raw_data.get("data", raw_data))
                 
-            # Clean numeric columns
             num_cols = ["b_qty", "s_qty", "b_amt", "s_amt"]
             for col in num_cols:
                 if col in df.columns:
@@ -39,30 +35,14 @@ with tab1:
                     
             df["Date"] = pd.to_datetime(df["date"], errors='coerce')
             df = df.sort_values(by="Date").reset_index(drop=True)
+            df.rename(columns={"b_qty": "Buy_Qty", "s_qty": "Sell_Qty", "b_amt": "Buy_Amount", "s_amt": "Sell_Amount"}, inplace=True, errors='ignore')
             
-            # Rename for professionalism
-            df.rename(columns={
-                "b_qty": "Buy_Qty", "s_qty": "Sell_Qty",
-                "b_amt": "Buy_Amount", "s_amt": "Sell_Amount"
-            }, inplace=True, errors='ignore')
-            
-            # --- 2. CALCULATE METRICS, 30-DAY AVG & CUMULATIVE TOTALS ---
-            if "Buy_Qty" in df.columns and "Sell_Qty" in df.columns:
-                df["Net_Qty"] = df["Buy_Qty"] - df["Sell_Qty"]
-                df["Cum_Net_Qty"] = df["Net_Qty"].cumsum()  # Running total of Qty
-                
-                df["Total_Vol"] = df["Buy_Qty"] + df["Sell_Qty"]
-                # 30-Day Moving Average of Volume
-                df["Avg_30D_Vol"] = df["Total_Vol"].rolling(window=30, min_periods=1).mean()
-                
-            if "Buy_Amount" in df.columns and "Sell_Amount" in df.columns:
-                df["Net_Amount"] = df["Buy_Amount"] - df["Sell_Amount"]  
-                df["Cum_Net_Amount"] = df["Net_Amount"].cumsum()  # Running total of Amount
+            df["Net_Qty"] = df["Buy_Qty"] - df["Sell_Qty"]
+            df["Net_Amount"] = df["Buy_Amount"] - df["Sell_Amount"]
+            df["Total_Vol"] = df["Buy_Qty"] + df["Sell_Qty"]
+            df["Avg_30D_Vol"] = df["Total_Vol"].rolling(window=30, min_periods=1).mean()
 
-            # --- 3. CUSTOM DATE FILTER ---
             st.write("---")
-            st.subheader("📅 Filter & Analyze Data")
-            
             min_date, max_date = df["Date"].min().date(), df["Date"].max().date()
             date_range = st.date_input("Select Date Range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
             
@@ -71,198 +51,85 @@ with tab1:
                 mask = (df["Date"].dt.date >= start_date) & (df["Date"].dt.date <= end_date)
                 filtered_df = df.loc[mask].copy()
                 
-                # --- 4. TOTAL NET BOXES WITH COLOR ---
-                # Grab the final cumulative values for the period
-                final_cum_qty = filtered_df["Cum_Net_Qty"].iloc[-1] if not filtered_df.empty else 0
-                final_cum_amt = filtered_df["Cum_Net_Amount"].iloc[-1] if not filtered_df.empty else 0
-                
-                qty_color = "#198754" if final_cum_qty > 0 else "#dc3545"
-                amt_color = "#198754" if final_cum_amt > 0 else "#dc3545"
-                
-                st.write("#### 📊 Cumulative Position (End of Selected Period)")
-                c1, c2 = st.columns(2)
-                c1.markdown(f"""
-                <div style="background-color: {qty_color}; padding: 20px; border-radius: 10px; color: white; text-align: center;">
-                    <h3 style="color: white; margin:0;">Holding Inventory (Cum. Qty)</h3>
-                    <h2 style="color: white; margin:0;">{final_cum_qty:,.0f}</h2>
-                    <p style="margin:0;">{'🟢 Net Accumulator' if final_cum_qty > 0 else '🔴 Net Distributor'}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                c2.markdown(f"""
-                <div style="background-color: {amt_color}; padding: 20px; border-radius: 10px; color: white; text-align: center;">
-                    <h3 style="color: white; margin:0;">Net Capital Flow (Cum. Amount)</h3>
-                    <h2 style="color: white; margin:0;">Rs {final_cum_amt:,.2f}</h2>
-                    <p style="margin:0;">{'🟢 Capital Trapped/Invested' if final_cum_amt > 0 else '🔴 Capital Booked/Exited'}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.write("<br>", unsafe_allow_html=True)
-
-                # --- 5. COLOR STRENGTH STYLING FUNCTION ---
+                # --- COLOR STRENGTH STYLING ---
                 def apply_color_strength(row):
-                    net = row["Net_Qty"]
-                    avg_vol = row["Avg_30D_Vol"]
-                    
+                    net, avg_vol = row["Net_Qty"], row["Avg_30D_Vol"]
                     if avg_vol == 0 or pd.isna(avg_vol): return [''] * len(row)
-                    
-                    aggression_ratio = abs(net) / avg_vol 
-                    alpha = min(max(aggression_ratio * 0.5, 0.15), 0.85)
-                    
-                    if net > 0:
-                        color = f"rgba(0, 200, 0, {alpha})"
-                    elif net < 0:
-                        color = f"rgba(255, 0, 0, {alpha})"
-                    else:
-                        color = "rgba(128, 128, 128, 0.2)"
-                        
+                    alpha = min(max((abs(net) / avg_vol) * 0.5, 0.15), 0.85)
+                    color = f"rgba(0, 200, 0, {alpha})" if net > 0 else f"rgba(255, 0, 0, {alpha})" if net < 0 else "rgba(128, 128, 128, 0.2)"
                     return [f"background-color: {color}; color: white;"] * len(row)
 
-                # Prepare final display dataframe
                 display_df = filtered_df.copy()
                 display_df["Date"] = display_df["Date"].dt.strftime('%Y-%m-%d')
-                
-                fmt_df = display_df[["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Cum_Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount", "Cum_Net_Amount", "Avg_30D_Vol"]].copy()
+                fmt_df = display_df[["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount", "Avg_30D_Vol"]]
                 
                 st.write("### 🧮 Detailed Breakdown (Color-coded by Aggression)")
-                styled_df = fmt_df.style.apply(apply_color_strength, axis=1)\
-                                        .format({
-                                            "Buy_Qty": "{:,.0f}", "Sell_Qty": "{:,.0f}", 
-                                            "Net_Qty": "{:,.0f}", "Cum_Net_Qty": "{:,.0f}",
-                                            "Buy_Amount": "{:,.0f}", "Sell_Amount": "{:,.0f}", 
-                                            "Net_Amount": "{:,.0f}", "Cum_Net_Amount": "{:,.0f}",
-                                            "Avg_30D_Vol": "{:,.0f}"
-                                        })
+                styled_df = fmt_df.style.apply(apply_color_strength, axis=1).format(precision=0)
                 st.dataframe(styled_df, use_container_width=True, height=400)
-                
-               
 
-                # --- 6. SMART MERGE & SAVE TO GITHUB ---
+                # --- SMART SAVE TO GITHUB ---
                 st.write("---")
                 st.subheader("💾 Save to GitHub (Permanent)")
-                st.info("Files will be saved as `STOCK_TMS.csv` (e.g., `NABIL_58.csv`).")
-                
                 c_stock, c_tms, c_custom = st.columns(3)
-                with c_stock:
-                    stock_name = st.text_input("Stock Symbol (e.g., NABIL)", value="").upper()
-                with c_tms:
-                    tms_no = st.text_input("TMS/Broker No (e.g., 58)", value="")
-                with c_custom:
-                    custom_name = st.text_input("Or Custom Filename (Overrides above)", value="")
+                stock_name = c_stock.text_input("Stock Symbol (e.g., NABIL)", "").upper()
+                tms_no = c_tms.text_input("TMS/Broker No (e.g., 58)", "")
+                custom_name = c_custom.text_input("Or Custom Filename", "")
                 
-                # Determine the final filename
-                if custom_name:
-                    save_name = custom_name
-                elif stock_name and tms_no:
-                    save_name = f"{stock_name}_{tms_no}"
-                else:
-                    save_name = ""
+                save_name = custom_name if custom_name else (f"{stock_name}_{tms_no}" if stock_name and tms_no else "")
 
-                st.write("")
                 if st.button("Commit to GitHub", use_container_width=True, type="primary"):
                     if save_name:
                         file_path = f"Data_analysis/{save_name}.csv"
-                        
-                        # Only save the raw data, DO NOT save cumulative columns. 
-                        # We will calculate cumulatives dynamically later.
                         cols_to_save = ["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount"]
                         save_df = display_df[cols_to_save].copy()
                         
                         try:
-                            # Authenticate with GitHub
                             g = Github(st.secrets["github"]["token"]) 
-                            repo = g.get_repo(st.secrets["github"]["repo"]) 
+                            repo = g.get_repo(st.secrets["github"]["repo_name"]) # FIXED REPO_NAME
                             
                             try:
-                                # Fetch existing file from GitHub to merge
                                 file_contents = repo.get_contents(file_path)
-                                existing_csv = file_contents.decoded_content.decode('utf-8')
-                                existing_df = pd.read_csv(io.StringIO(existing_csv))
-                                
-                                # Merge logic
-                                combined_df = pd.concat([existing_df, save_df])
-                                combined_df = combined_df.drop_duplicates(subset=["Date"], keep="last")
-                                combined_df = combined_df.sort_values(by="Date").reset_index(drop=True)
-                                
-                                # Update file on GitHub
-                                updated_csv = combined_df.to_csv(index=False)
-                                repo.update_file(file_contents.path, f"App: Updated {save_name}", updated_csv, file_contents.sha)
-                                st.success(f"🎉 Successfully merged and saved `{save_name}.csv` to GitHub!")
-                                
-                            except Exception: 
-                                # File doesn't exist yet, create it!
-                                new_csv = save_df.to_csv(index=False)
-                                repo.create_file(file_path, f"App: Created {save_name}", new_csv)
-                                st.success(f"🎉 Successfully created `{save_name}.csv` on GitHub!")
-                                
-                        except KeyError:
-                            st.error("❌ GitHub secrets not found. Check your secrets.toml.")
-                        except Exception as e:
-                            st.error(f"❌ Failed to connect to GitHub. Error: {e}")
-                    else:
-                        st.error("Please provide either a Stock + TMS combination, or a Custom Filename.")
-                            
-        # THIS WAS THE MISSING BLOCK!
-        except json.JSONDecodeError:
-            st.error("❌ The file uploaded is not a valid JSON structure.")
-        except Exception as e:
-            st.error(f"❌ An error occurred while processing the file: {e}")
-            
-    else:
-        st.info("👆 Please upload a `.txt` or `.json` file containing your broker data to begin.")
+                                existing_df = pd.read_csv(io.StringIO(file_contents.decoded_content.decode('utf-8')))
+                                combined_df = pd.concat([existing_df, save_df]).drop_duplicates(subset=["Date"], keep="last").sort_values("Date")
+                                repo.update_file(file_contents.path, f"Updated {save_name}", combined_df.to_csv(index=False), file_contents.sha)
+                                st.success(f"🎉 Merged and saved `{save_name}.csv`!")
+                            except: 
+                                repo.create_file(file_path, f"Created {save_name}", save_df.to_csv(index=False))
+                                st.success(f"🎉 Created `{save_name}.csv`!")
+                        except Exception as e: st.error(f"❌ Error: {e}")
+                    else: st.error("Provide a filename.")
+        except Exception as e: st.error(f"❌ Error: {e}")
 
-# --- 7. BROWSE SAVED DATA FROM GITHUB ---
 with tab2:
-    st.subheader("📂 Your Saved Analyses (GitHub)")
+    st.subheader("📂 Browse Saved Data")
     try:
         g = Github(st.secrets["github"]["token"]) 
-        repo = g.get_repo(st.secrets["github"]["repo_name"])
-        
+        repo = g.get_repo(st.secrets["github"]["repo_name"]) # FIXED REPO_NAME
         try:
-            # Fetch folder contents from GitHub
-            contents = repo.get_contents("Data_analysis")
-            saved_files = [file.name for file in contents if file.name.endswith(".csv")]
-            
-            if saved_files:
-                selected_file = st.selectbox("Select a file to view:", saved_files)
-                
-                if selected_file:
-                    file_data = repo.get_contents(f"Data_analysis/{selected_file}")
-                    csv_string = file_data.decoded_content.decode('utf-8')
-                    hist_df = pd.read_csv(io.StringIO(csv_string))
-                    
-                    st.write(f"**Showing Data for:** `{selected_file}` ({len(hist_df)} rows)")
-                    
-                    if "Net_Qty" in hist_df.columns:
-                        t_qty = hist_df["Net_Qty"].sum()
-                        st.metric("Historical Net Qty", f"{t_qty:,.0f}", delta="Accumulating" if t_qty > 0 else "Distributing")
-                    
-                    st.dataframe(hist_df, use_container_width=True)
-                    
-                    # Delete from GitHub button
-                    if st.button(f"🗑️ Delete {selected_file} from GitHub"):
-                        repo.delete_file(file_data.path, f"App: Deleted {selected_file}", file_data.sha)
-                        st.success(f"Deleted {selected_file} from GitHub!")
-                        st.rerun()
-            else:
-                st.info("No CSV files found in the `Data_analysis` folder on GitHub.")
-        except Exception:
-            st.info("The `Data_analysis` folder hasn't been created on GitHub yet. Save a file first!")
-            
-    except Exception as e:
-        st.error("❌ Could not authenticate with GitHub to load files. Check your secrets.")
+            saved_files = [f.name for f in repo.get_contents("Data_analysis") if f.name.endswith(".csv")]
+            selected_file = st.selectbox("Select file:", saved_files) if saved_files else None
+            if selected_file:
+                file_data = repo.get_contents(f"Data_analysis/{selected_file}")
+                hist_df = pd.read_csv(io.StringIO(file_data.decoded_content.decode('utf-8')))
+                st.dataframe(hist_df, use_container_width=True)
+                if st.button(f"🗑️ Delete {selected_file}"):
+                    repo.delete_file(file_data.path, f"Deleted {selected_file}", file_data.sha)
+                    st.rerun()
+        except: st.info("No files found.")
+    except: st.error("❌ GitHub auth failed.")
 
-
-# --- 8. ADVANCED ANALYSIS TAB ---
 with tab3:
     try:
-        # Dynamically execute the Advanced Analysis script
-        file_path = os.path.join(SAVE_DIR, "Advanced_analysis.py")
-        with open(file_path, encoding="utf-8") as f:
-            code = compile(f.read(), "Advanced_analysis.py", 'exec')
-            exec(code, globals())
-    except FileNotFoundError:
-        st.info("🚀 Creating Advanced Analysis Module...")
-        st.warning("Please save the `Advanced_analysis.py` file inside the `Data_analysis` folder to unlock this tab.")
-    except Exception as e:
-        st.error(f"❌ Error loading Advanced Analysis: {e}")
+        with open("Data_analysis/Advanced_analysis.py", encoding="utf-8") as f: exec(compile(f.read(), "Advanced_analysis.py", 'exec'), globals())
+    except Exception as e: st.error(f"❌ Error loading Advanced Analysis: {e}")
+
+with tab4:
+    try:
+        with open("Data_analysis/Visual.py", encoding="utf-8") as f: exec(compile(f.read(), "Visual.py", 'exec'), globals())
+    except FileNotFoundError: st.warning("Create `Visual.py` inside `Data_analysis` folder.")
+    except Exception as e: st.error(f"❌ Error loading Visualizations: {e}")
+
+with tab5:
+    try:
+        with open("Advisor.py", encoding="utf-8") as f: exec(compile(f.read(), "Advisor.py", 'exec'), globals())
+    except: st.info("Create `Advisor.py` in the main folder to use AI.")
