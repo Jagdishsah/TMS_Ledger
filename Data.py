@@ -4,6 +4,8 @@ import json
 import os
 from datetime import datetime
 import numpy as np
+from github import Github
+import io
 
 # Ensure the Data_analysis directory exists
 SAVE_DIR = "Data_analysis"
@@ -135,10 +137,10 @@ with tab1:
                                         })
                 st.dataframe(styled_df, use_container_width=True, height=400)
 
-                # --- 6. SMART MERGE & SAVE ---
+               # --- 6. SMART MERGE & SAVE TO GITHUB ---
                 st.write("---")
-                st.subheader("💾 Smart Save (Merge Data)")
-                st.info("If the file already exists, new dates will be added and duplicates will be removed.")
+                st.subheader("💾 Save to GitHub (Permanent)")
+                st.info("This will permanently merge and save the data directly to your GitHub repository.")
                 
                 c_input, c_btn = st.columns([3, 1])
                 with c_input:
@@ -146,58 +148,83 @@ with tab1:
                 with c_btn:
                     st.write("")
                     st.write("")
-                    if st.button("Merge & Save CSV", use_container_width=True):
+                    if st.button("Commit to GitHub", use_container_width=True):
                         if save_name:
-                            final_path = os.path.join(SAVE_DIR, f"{save_name}.csv")
-                            
-                            # Clean up the dataset to save
+                            file_path = f"Data_analysis/{save_name}.csv"
                             save_df = display_df.drop(columns=["Total_Vol", "Avg_30D_Vol"], errors='ignore')
                             
-                            if os.path.exists(final_path):
-                                # Load existing data and merge
-                                existing_df = pd.read_csv(final_path)
-                                combined_df = pd.concat([existing_df, save_df])
-                                # Drop duplicates based on Date (keep the newly uploaded data if dates overlap)
-                                combined_df = combined_df.drop_duplicates(subset=["Date"], keep="last")
-                                # Sort by date
-                                combined_df = combined_df.sort_values(by="Date").reset_index(drop=True)
-                                combined_df.to_csv(final_path, index=False)
-                                st.success(f"🎉 Merged with existing file and saved as `{final_path}`! (Total Days: {len(combined_df)})")
-                            else:
-                                # Save as new
-                                save_df.to_csv(final_path, index=False)
-                                st.success(f"🎉 Created new file `{final_path}`!")
+                            try:
+                                # 1. Authenticate with GitHub (Change these keys if your secrets are named differently!)
+                                g = Github(st.secrets["github"]["token"]) 
+                                repo = g.get_repo(st.secrets["github"]["repo"]) 
+                                
+                                # 2. Try to fetch existing file from GitHub to merge
+                                try:
+                                    file_contents = repo.get_contents(file_path)
+                                    existing_csv = file_contents.decoded_content.decode('utf-8')
+                                    existing_df = pd.read_csv(io.StringIO(existing_csv))
+                                    
+                                    # Merge logic
+                                    combined_df = pd.concat([existing_df, save_df])
+                                    combined_df = combined_df.drop_duplicates(subset=["Date"], keep="last")
+                                    combined_df = combined_df.sort_values(by="Date").reset_index(drop=True)
+                                    
+                                    # Update file on GitHub
+                                    updated_csv = combined_df.to_csv(index=False)
+                                    repo.update_file(file_contents.path, f"App: Updated {save_name}", updated_csv, file_contents.sha)
+                                    st.success(f"🎉 Successfully merged and saved `{save_name}.csv` to GitHub!")
+                                    
+                                except Exception: 
+                                    # 3. File doesn't exist yet, create it!
+                                    new_csv = save_df.to_csv(index=False)
+                                    repo.create_file(file_path, f"App: Created {save_name}", new_csv)
+                                    st.success(f"🎉 Successfully created `{save_name}.csv` on GitHub!")
+                                    
+                            except KeyError:
+                                st.error("❌ GitHub secrets not found. Make sure st.secrets['github']['token'] and ['repo'] exist.")
+                            except Exception as e:
+                                st.error(f"❌ Failed to connect to GitHub. Error: {e}")
                         else:
                             st.error("Please provide a filename.")
 
-        except Exception as e:
-            st.error(f"❌ Error processing file: {e}")
 
-# --- 7. BROWSE SAVED DATA TAB ---
+# --- 7. BROWSE SAVED DATA FROM GITHUB ---
 with tab2:
-    st.subheader("📂 Your Saved Analyses")
-    saved_files = [f for f in os.listdir(SAVE_DIR) if f.endswith(".csv")]
-    
-    if saved_files:
-        selected_file = st.selectbox("Select a file to view:", saved_files)
+    st.subheader("📂 Your Saved Analyses (GitHub)")
+    try:
+        g = Github(st.secrets["github"]["token"]) 
+        repo = g.get_repo(st.secrets["github"]["repo"])
         
-        if selected_file:
-            file_path = os.path.join(SAVE_DIR, selected_file)
-            hist_df = pd.read_csv(file_path)
+        try:
+            # Fetch folder contents from GitHub
+            contents = repo.get_contents("Data_analysis")
+            saved_files = [file.name for file in contents if file.name.endswith(".csv")]
             
-            st.write(f"**Showing Data for:** `{selected_file}` ({len(hist_df)} rows)")
+            if saved_files:
+                selected_file = st.selectbox("Select a file to view:", saved_files)
+                
+                if selected_file:
+                    file_data = repo.get_contents(f"Data_analysis/{selected_file}")
+                    csv_string = file_data.decoded_content.decode('utf-8')
+                    hist_df = pd.read_csv(io.StringIO(csv_string))
+                    
+                    st.write(f"**Showing Data for:** `{selected_file}` ({len(hist_df)} rows)")
+                    
+                    if "Net_Qty" in hist_df.columns:
+                        t_qty = hist_df["Net_Qty"].sum()
+                        st.metric("Historical Net Qty", f"{t_qty:,.0f}", delta="Accumulating" if t_qty > 0 else "Distributing")
+                    
+                    st.dataframe(hist_df, use_container_width=True)
+                    
+                    # Delete from GitHub button
+                    if st.button(f"🗑️ Delete {selected_file} from GitHub"):
+                        repo.delete_file(file_data.path, f"App: Deleted {selected_file}", file_data.sha)
+                        st.success(f"Deleted {selected_file} from GitHub!")
+                        st.rerun()
+            else:
+                st.info("No CSV files found in the `Data_analysis` folder on GitHub.")
+        except Exception:
+            st.info("The `Data_analysis` folder hasn't been created on GitHub yet. Save a file first!")
             
-            # Simple Total calculation for the saved file
-            if "Net_Qty" in hist_df.columns:
-                t_qty = hist_df["Net_Qty"].sum()
-                st.metric("Historical Net Qty Accumulation", f"{t_qty:,.0f}", delta="Accumulating" if t_qty > 0 else "Distributing")
-            
-            st.dataframe(hist_df, use_container_width=True)
-            
-            # Allow user to delete file
-            if st.button(f"🗑️ Delete {selected_file}"):
-                os.remove(file_path)
-                st.success(f"Deleted {selected_file}")
-                st.rerun()
-    else:
-        st.info("No saved data found in the `Data_analysis` folder yet.")
+    except Exception as e:
+        st.error("❌ Could not authenticate with GitHub to load files. Check your secrets.")
