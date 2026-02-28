@@ -140,52 +140,67 @@ with tab1:
                 # --- 6. SMART MERGE & SAVE TO GITHUB ---
                 st.write("---")
                 st.subheader("💾 Save to GitHub (Permanent)")
-                st.info("This will permanently merge and save the data directly to your GitHub repository.")
+                st.info("Files will be saved as `STOCK_TMS.csv` (e.g., `NABIL_58.csv`).")
                 
-                c_input, c_btn = st.columns([3, 1])
-                with c_input:
-                    save_name = st.text_input("Filename (e.g., Broker_58)", value="Master_Broker_Data")
-                with c_btn:
-                    st.write("")
-                    st.write("")
-                    if st.button("Commit to GitHub", use_container_width=True):
-                        if save_name:
-                            file_path = f"Data_analysis/{save_name}.csv"
-                            save_df = display_df.drop(columns=["Total_Vol", "Avg_30D_Vol"], errors='ignore')
+                c_stock, c_tms, c_custom = st.columns(3)
+                with c_stock:
+                    stock_name = st.text_input("Stock Symbol (e.g., NABIL)", value="").upper()
+                with c_tms:
+                    tms_no = st.text_input("TMS/Broker No (e.g., 58)", value="")
+                with c_custom:
+                    custom_name = st.text_input("Or Custom Filename (Overrides above)", value="")
+                
+                # Determine the final filename
+                if custom_name:
+                    save_name = custom_name
+                elif stock_name and tms_no:
+                    save_name = f"{stock_name}_{tms_no}"
+                else:
+                    save_name = ""
+
+                st.write("")
+                if st.button("Commit to GitHub", use_container_width=True, type="primary"):
+                    if save_name:
+                        file_path = f"Data_analysis/{save_name}.csv"
+                        
+                        # Only save the raw data, DO NOT save cumulative columns. 
+                        # We will calculate cumulatives dynamically later.
+                        cols_to_save = ["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount"]
+                        save_df = display_df[cols_to_save].copy()
+                        
+                        try:
+                            # Authenticate with GitHub
+                            g = Github(st.secrets["github"]["token"]) 
+                            repo = g.get_repo(st.secrets["github"]["repo"]) 
                             
                             try:
-                                # Authenticate with GitHub
-                                g = Github(st.secrets["github"]["token"]) 
-                                repo = g.get_repo(st.secrets["github"]["repo_name"]) 
+                                # Fetch existing file from GitHub to merge
+                                file_contents = repo.get_contents(file_path)
+                                existing_csv = file_contents.decoded_content.decode('utf-8')
+                                existing_df = pd.read_csv(io.StringIO(existing_csv))
                                 
-                                try:
-                                    # Fetch existing file from GitHub to merge
-                                    file_contents = repo.get_contents(file_path)
-                                    existing_csv = file_contents.decoded_content.decode('utf-8')
-                                    existing_df = pd.read_csv(io.StringIO(existing_csv))
-                                    
-                                    # Merge logic
-                                    combined_df = pd.concat([existing_df, save_df])
-                                    combined_df = combined_df.drop_duplicates(subset=["Date"], keep="last")
-                                    combined_df = combined_df.sort_values(by="Date").reset_index(drop=True)
-                                    
-                                    # Update file on GitHub
-                                    updated_csv = combined_df.to_csv(index=False)
-                                    repo.update_file(file_contents.path, f"App: Updated {save_name}", updated_csv, file_contents.sha)
-                                    st.success(f"🎉 Successfully merged and saved `{save_name}.csv` to GitHub!")
-                                    
-                                except Exception: 
-                                    # File doesn't exist yet, create it!
-                                    new_csv = save_df.to_csv(index=False)
-                                    repo.create_file(file_path, f"App: Created {save_name}", new_csv)
-                                    st.success(f"🎉 Successfully created `{save_name}.csv` on GitHub!")
-                                    
-                            except KeyError:
-                                st.error("❌ GitHub secrets not found. Make sure st.secrets['github']['token'] and ['repo'] exist.")
-                            except Exception as e:
-                                st.error(f"❌ Failed to connect to GitHub. Error: {e}")
-                        else:
-                            st.error("Please provide a filename.")
+                                # Merge logic
+                                combined_df = pd.concat([existing_df, save_df])
+                                combined_df = combined_df.drop_duplicates(subset=["Date"], keep="last")
+                                combined_df = combined_df.sort_values(by="Date").reset_index(drop=True)
+                                
+                                # Update file on GitHub
+                                updated_csv = combined_df.to_csv(index=False)
+                                repo.update_file(file_contents.path, f"App: Updated {save_name}", updated_csv, file_contents.sha)
+                                st.success(f"🎉 Successfully merged and saved `{save_name}.csv` to GitHub!")
+                                
+                            except Exception: 
+                                # File doesn't exist yet, create it!
+                                new_csv = save_df.to_csv(index=False)
+                                repo.create_file(file_path, f"App: Created {save_name}", new_csv)
+                                st.success(f"🎉 Successfully created `{save_name}.csv` on GitHub!")
+                                
+                        except KeyError:
+                            st.error("❌ GitHub secrets not found. Check your secrets.toml.")
+                        except Exception as e:
+                            st.error(f"❌ Failed to connect to GitHub. Error: {e}")
+                    else:
+                        st.error("Please provide either a Stock + TMS combination, or a Custom Filename.")
                             
         # THIS WAS THE MISSING BLOCK!
         except json.JSONDecodeError:
