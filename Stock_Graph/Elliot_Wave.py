@@ -5,8 +5,8 @@ import plotly.graph_objects as go
 from github import Github
 import io
 
-st.markdown("### 🌊 AI Elliott Wave Auto-Predictor (Live Tracking)")
-st.caption("Scans for completed market cycles AND tracks developing, unconfirmed waves in real-time.")
+st.markdown("### 🌊 AI Elliott Wave Auto-Predictor (Pro Edition)")
+st.caption("Features: Live Tracking, Volume Confirmation, Rule of Alternation, & Dynamic Fib Zones.")
 
 # --- 1. GITHUB FETCHING ---
 def fetch_saved_stocks():
@@ -25,7 +25,7 @@ if not saved_stocks:
 else:
     c1, c2, c3 = st.columns([2, 1, 1])
     selected_stock = c1.selectbox("Select Stock to Analyze:", saved_stocks)
-    swing_sensitivity = c2.number_input("Swing Sensitivity (Days)", min_value=2, max_value=20, value=4, help="Lower to 3 or 4 to catch early developing waves!")
+    swing_sensitivity = c2.number_input("Swing Sensitivity (Days)", min_value=2, max_value=20, value=4)
     wave_type = c3.selectbox("Scan Mode:", ["Auto-Predict (Last 6 Months)", "Motive (1-2-3-4-5)", "Correction (A-B-C)"])
 
     if selected_stock:
@@ -33,25 +33,28 @@ else:
         df = pd.read_csv(io.StringIO(file_data.decoded_content.decode('utf-8')))
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.sort_values("Date").reset_index(drop=True)
+        
+        # Ensure Volume column exists for Whale Check
+        if 'Volume' not in df.columns and 'volume' in df.columns:
+            df['Volume'] = df['volume']
+        elif 'Volume' not in df.columns:
+            df['Volume'] = 1 # Fallback if missing
 
-        # 🚀 DATA LIMITER
         if wave_type == "Auto-Predict (Last 6 Months)":
             six_months_ago = df['Date'].max() - pd.DateOffset(months=6)
             df = df[df['Date'] >= six_months_ago].reset_index(drop=True)
         elif len(df) > 500:
             df = df.tail(500).reset_index(drop=True)
 
-        # --- 2. LIVE SWING DETECTION ALGORITHM ---
+        # --- 2. SWING DETECTION ALGORITHM ---
         def find_swings(data, order):
             highs, lows = [], []
-            # Standard swing detection
             for i in range(order, len(data) - order):
                 if data['High'].iloc[i] == max(data['High'].iloc[i-order:i+order+1]):
                     highs.append((i, data['High'].iloc[i], 'High', data['Date'].iloc[i]))
                 if data['Low'].iloc[i] == min(data['Low'].iloc[i-order:i+order+1]):
                     lows.append((i, data['Low'].iloc[i], 'Low', data['Date'].iloc[i]))
             
-            # 🔥 LIVE EDGE DETECTION: Catch the absolute current price if it's breaking out!
             last_idx = len(data) - 1
             if data['High'].iloc[last_idx] >= max(data['High'].iloc[-order:]):
                 highs.append((last_idx, data['High'].iloc[last_idx], 'High', data['Date'].iloc[last_idx]))
@@ -60,7 +63,6 @@ else:
 
             swings = sorted(highs + lows, key=lambda x: x[0])
             
-            # Filter alternating swings
             alternating_swings = []
             for swing in swings:
                 if not alternating_swings:
@@ -103,94 +105,98 @@ else:
         motives = find_motive_waves(all_swings)
         corrections = find_abc_corrections(all_swings)
 
-        # Determine Active Mode
         if wave_type == "Auto-Predict (Last 6 Months)":
             last_motive_date = motives[-1][-1][3] if motives else pd.Timestamp.min
             last_corr_date = corrections[-1][-1][3] if corrections else pd.Timestamp.min
-            
-            if last_motive_date > last_corr_date:
-                active_mode = "Motive"
-                detected_patterns = motives
-            elif last_corr_date > last_motive_date:
-                active_mode = "Correction"
-                detected_patterns = corrections
-            else:
-                detected_patterns, active_mode = [], "None"
+            active_mode = "Motive" if last_motive_date > last_corr_date else "Correction" if last_corr_date > last_motive_date else "None"
+            detected_patterns = motives if active_mode == "Motive" else corrections if active_mode == "Correction" else []
         elif wave_type == "Motive (1-2-3-4-5)":
             active_mode, detected_patterns = "Motive", motives
         else:
             active_mode, detected_patterns = "Correction", corrections
 
-        # --- 4. VISUALIZATION & LIVE TRACKING ---
+        # --- 4. VISUALIZATION & AI ANALYSIS ---
         st.write("---")
         if not detected_patterns:
-            st.warning("No completed structures found. Try lowering Swing Sensitivity to 3 or 4 to catch micro-waves.")
+            st.warning("No completed structures found. Try lowering Swing Sensitivity.")
         else:
             fig = go.Figure()
-            fig.add_trace(go.Candlestick(
-                x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-                name='Price', increasing_line_color='#26a69a', decreasing_line_color='#ef5350', opacity=0.4
-            ))
+            fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', opacity=0.4))
 
             last_pattern = detected_patterns[-1]
             labels = ['0', '1', '2', '3', '4', '5'] if active_mode == "Motive" else ['0', 'A', 'B', 'C']
             line_color = '#2ecc71' if active_mode == "Motive" else '#e74c3c'
 
-            # Plot Completed Pattern
             w_dates, w_prices = [p[3] for p in last_pattern], [p[1] for p in last_pattern]
             fig.add_trace(go.Scatter(x=w_dates, y=w_prices, mode='lines+markers', line=dict(color=line_color, width=4), name='Completed Pattern'))
             
             for i, p in enumerate(last_pattern):
-                fig.add_annotation(
-                    x=p[3], y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, arrowhead=2, ax=0, ay=-25 if p[2]=='High' else 25,
-                    font=dict(size=14, color='white'), bgcolor=line_color
-                )
+                fig.add_annotation(x=p[3], y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, ax=0, ay=-25 if p[2]=='High' else 25, font=dict(color='white'), bgcolor=line_color)
 
-            current_price = df['Close'].iloc[-1]
-            current_date = df['Date'].iloc[-1]
-            pattern_end_date = w_dates[-1]
-            pattern_end_price = w_prices[-1]
+            current_price, current_date = df['Close'].iloc[-1], df['Date'].iloc[-1]
+            pattern_end_date, pattern_end_price = w_dates[-1], w_prices[-1]
 
-            # 🔥 LIVE DEVELOPING WAVE TRACKER 🔥
-            st.markdown("### 🤖 Trading Desk AI Recommendation")
-            
-            if active_mode == "Correction":
-                # Check if price has started breaking out AFTER the C wave
-                if current_date > pattern_end_date and current_price > pattern_end_price:
-                    st.success("🟢 **SIGNAL: NEW BULLISH WAVE DETECTED! (ENTER / BUY)**")
-                    st.markdown(f"**Live Analysis:** The A-B-C dump finished at Rs {pattern_end_price}. The algorithm detects that a **NEW Developing Wave (Likely Wave 1 or 3)** has already begun, pushing price up to Rs {current_price:.2f}.")
-                    
-                    # Draw a dashed line tracking the live breakout
-                    fig.add_trace(go.Scatter(
-                        x=[pattern_end_date, current_date], y=[pattern_end_price, current_price],
-                        mode='lines+markers', line=dict(color='#f1c40f', width=3, dash='dash'), name='Live Developing Wave'
-                    ))
-                    fig.add_annotation(x=current_date, y=current_price, text="<b>Live Wave</b>", showarrow=True, arrowhead=2, font=dict(color="black"), bgcolor="#f1c40f")
+            st.markdown("### 🤖 Advanced Trading Desk Analysis")
+            confidence_score = 100
+            analysis_notes = []
 
-                    # Fibonacci Targets for the new wave
-                    correction_drop = w_prices[0] - pattern_end_price
-                    pred_W3 = pattern_end_price + (correction_drop * 1.618)
-                    st.metric("Macro Bull Target (Wave 3 Projection)", f"Rs {pred_W3:.2f}")
-
+            # 🛠️ A. RULE OF ALTERNATION (For Motives)
+            if active_mode == "Motive":
+                w2_time = last_pattern[2][0] - last_pattern[1][0]
+                w4_time = last_pattern[4][0] - last_pattern[3][0]
+                w2_depth = (last_pattern[1][1] - last_pattern[2][1]) / (last_pattern[1][1] - last_pattern[0][1])
+                w4_depth = (last_pattern[3][1] - last_pattern[4][1]) / (last_pattern[3][1] - last_pattern[2][1])
+                
+                if abs(w2_time - w4_time) <= 2 and abs(w2_depth - w4_depth) < 0.2:
+                    confidence_score -= 20
+                    analysis_notes.append("⚠️ **Rule of Alternation Failed:** Wave 2 and Wave 4 look too similar in time and depth. This lowers the probability of a true 5-wave impulse.")
                 else:
-                    st.info("⏳ **SIGNAL: ACCUMULATE (WAIT FOR BREAKOUT)**")
-                    st.markdown("**Live Analysis:** The A-B-C dump is complete. We are currently consolidating at the bottom. Prepare for a new Wave 1 breakout.")
+                    analysis_notes.append("✅ **Rule of Alternation Passed:** Wave 2 and Wave 4 show distinct behaviors (sharp vs sideways).")
+
+            # 🐋 B. VOLUME CONFIRMATION
+            if active_mode == "Motive" and df['Volume'].sum() > len(df): # basic check if volume isn't just 1s
+                vol_w1 = df['Volume'].iloc[last_pattern[0][0]:last_pattern[1][0]].mean()
+                vol_w3 = df['Volume'].iloc[last_pattern[2][0]:last_pattern[3][0]].mean()
+                
+                if vol_w3 < vol_w1:
+                    confidence_score -= 30
+                    analysis_notes.append(f"🐋 **Whale Check Failed:** Wave 3 Volume ({vol_w3:,.0f}) is lower than Wave 1 ({vol_w1:,.0f}). Warning: Weak impulse, potential fakeout.")
+                else:
+                    analysis_notes.append("✅ **Whale Check Passed:** Wave 3 shows strong volume confirmation.")
+
+            # 📏 C. FIBONACCI RETRACEMENT OVERLAYS & PREDICTIONS
+            if active_mode == "Correction":
+                if current_date > pattern_end_date and current_price > pattern_end_price:
+                    # Draw Fib lines from top of 0 to bottom of C
+                    fib_0 = w_prices[0]
+                    fib_100 = pattern_end_price
+                    diff = fib_0 - fib_100
+                    
+                    fib_618 = fib_100 + (diff * 0.618)
+                    fib_382 = fib_100 + (diff * 0.382)
+                    
+                    fig.add_hline(y=fib_618, line_dash="dot", line_color="#f39c12", annotation_text="Fib 0.618 Golden Ratio")
+                    fig.add_hline(y=fib_382, line_dash="dot", line_color="#3498db", annotation_text="Fib 0.382 Retracement")
+                    
+                    fig.add_trace(go.Scatter(x=[pattern_end_date, current_date], y=[pattern_end_price, current_price], mode='lines+markers', line=dict(color='#f1c40f', width=3, dash='dash'), name='Live Wave'))
+
+                    if current_price >= fib_618:
+                        confidence_score += 20
+                        st.success(f"🟢 **STRONG BUY: Golden Pocket Bounced!** (Confidence: {min(confidence_score, 100)}%)")
+                        analysis_notes.append("🎯 **Fib Confluence:** Price has decisively broken above the 0.618 Fibonacci retracement of the A-B-C drop. Massive bullish confirmation.")
+                    else:
+                        st.info(f"🟡 **EARLY ENTRY SIGNAL.** (Confidence: {confidence_score}%)")
+                        analysis_notes.append("⏳ Price is moving up but hasn't broken the 0.618 Golden Ratio resistance yet.")
+                else:
+                    st.info("Accumulate: Market consolidating at bottom.")
             
             elif active_mode == "Motive":
-                if current_date > pattern_end_date and current_price < pattern_end_price:
-                    st.error("🚨 **SIGNAL: DUMP IN PROGRESS (EXIT)**")
-                    st.markdown(f"**Live Analysis:** The 5-Wave Pump finished at Rs {pattern_end_price}. The algorithm detects that the **A-B-C Dump has already started**, bringing price down to Rs {current_price:.2f}.")
-                    
-                    # Draw dashed line tracking the live dump
-                    fig.add_trace(go.Scatter(
-                        x=[pattern_end_date, current_date], y=[pattern_end_price, current_price],
-                        mode='lines+markers', line=dict(color='#e67e22', width=3, dash='dash'), name='Live Developing Dump'
-                    ))
-                    fig.add_annotation(x=current_date, y=current_price, text="<b>Live Dump</b>", showarrow=True, arrowhead=2, font=dict(color="white"), bgcolor="#e67e22")
+                st.error(f"🚨 **SIGNAL: DUMP IN PROGRESS / TAKE PROFIT** (Confidence: {confidence_score}%)")
+                if current_date > pattern_end_date:
+                    fig.add_trace(go.Scatter(x=[pattern_end_date, current_date], y=[pattern_end_price, current_price], mode='lines+markers', line=dict(color='#e67e22', width=3, dash='dash'), name='Live Dump'))
 
-                else:
-                    st.warning("⚠️ **SIGNAL: TOP REACHED (TAKE PROFIT)**")
-                    st.markdown("**Live Analysis:** Wave 5 just completed. A major correction is imminent.")
+            for note in analysis_notes:
+                st.markdown(note)
 
             # Formatting
             dt_breaks = pd.date_range(start=df['Date'].min(), end=df['Date'].max()).difference(df['Date'])
