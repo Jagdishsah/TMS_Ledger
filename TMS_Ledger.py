@@ -214,7 +214,7 @@ with st.sidebar:
         "📜 Ledger History", 
         "📊 Analytics", 
         "🛠️ Manage Data",
-        "📈 Data Analysis"
+        "📈 Data Analysis",
         "🤖 AI Advisor"
     ])
     
