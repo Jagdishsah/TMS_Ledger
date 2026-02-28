@@ -103,13 +103,15 @@ def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
     # --- PLOTTING ---
     fig = go.Figure()
     
+    # Base Candlestick
     fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', opacity=0.8))
     
     if not future_df.empty:
         fig.add_trace(go.Candlestick(x=future_df['Date'], open=future_df['Open'], high=future_df['High'], low=future_df['Low'], close=future_df['Close'], increasing_line_color='rgba(128,128,128,0.3)', decreasing_line_color='rgba(128,128,128,0.3)', name='Future (Replay)'))
         
-        # 🚀 FIX 1: Convert date to String so Plotly doesn't crash doing Timestamp math!
-        fig.add_vline(x=replay_date.strftime('%Y-%m-%d'), line_dash="dash", line_color="white", annotation_text="Replay Present")
+        # 🚀 THE FINAL FIX: Convert date to Milliseconds (Float). Plotly handles float math perfectly without crashing!
+        replay_ms = pd.Timestamp(replay_date).timestamp() * 1000
+        fig.add_vline(x=replay_ms, line_dash="dash", line_color="white", annotation_text="Replay Present")
 
     if not detected_patterns:
         st.warning("No patterns found at this sensitivity/date.")
@@ -120,16 +122,16 @@ def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
     labels = ['0', '1', '2', '3', '4', '5'] if active_mode == "Motive" else ['0', 'A', 'B', 'C']
     color = '#2ecc71' if active_mode == "Motive" else '#e74c3c'
     
-    # 🚀 FIX 2: Convert all Pandas Timestamps to Strings for Plotly!
-    w_dates = [p[3].strftime('%Y-%m-%d') for p in last_pattern]
+    w_dates = [p[3] for p in last_pattern]
     w_prices = [p[1] for p in last_pattern]
     
     fig.add_trace(go.Scatter(x=w_dates, y=w_prices, mode='lines+markers', line=dict(color=color, width=4), name='Wave Structure'))
     for i, p in enumerate(last_pattern):
         is_unconfirmed = "Unconfirmed" in p[2]
         border_col = "yellow" if is_unconfirmed else color
-        # 🚀 FIX 3: Format p[3] as a string here too
-        fig.add_annotation(x=p[3].strftime('%Y-%m-%d'), y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, ax=0, ay=-25 if 'High' in p[2] else 25, font=dict(color='black' if is_unconfirmed else 'white'), bgcolor=border_col)
+        # Also fix the wave labels by using milliseconds just to be 100% safe
+        ann_x = pd.Timestamp(p[3]).timestamp() * 1000
+        fig.add_annotation(x=ann_x, y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, ax=0, ay=-25 if 'High' in p[2] else 25, font=dict(color='black' if is_unconfirmed else 'white'), bgcolor=border_col)
 
     # --- INSTITUTIONAL ANALYSIS & INVALIDATION ---
     st.markdown(f"### 📈 AI Market Bias: {'BULLISH 🟢' if htf_bullish else 'BEARISH 🔴'} (HTF 200-SMA)")
@@ -153,41 +155,9 @@ def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
         fig.add_hline(y=fib_618, line_dash="dash", line_color="#f1c40f", annotation_text="Golden Breakout (0.618)")
 
     dt_breaks = pd.date_range(start=df_full['Date'].min(), end=df_full['Date'].max()).difference(df_full['Date'])
-    dt_breaks_str = dt_breaks.strftime('%Y-%m-%d').tolist()
-    
-    fig.update_xaxes(rangebreaks=[dict(values=dt_breaks_str)], rangeslider_visible=False)
+    fig.update_xaxes(rangebreaks=[dict(values=dt_breaks.strftime('%Y-%m-%d').tolist())], rangeslider_visible=False)
     fig.update_layout(height=650, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=30, b=10))
     st.plotly_chart(fig, use_container_width=True)
-    
-    # --- INSTITUTIONAL ANALYSIS & INVALIDATION ---
-    st.markdown(f"### 📈 AI Market Bias: {'BULLISH 🟢' if htf_bullish else 'BEARISH 🔴'} (HTF 200-SMA)")
-    c1, c2 = st.columns(2)
-    
-    if active_mode == "Motive":
-        invalidation_level = w_prices[1]
-        c1.error(f"🚨 **DUMP EXPECTED (TAKE PROFIT)**")
-        c2.warning(f"❌ **Invalidation Level:** Rs {invalidation_level:.2f} (Overlap Rule)")
-        
-        pred_A = w_prices[5] - ((w_prices[5] - w_prices[0]) * 0.382)
-        fig.add_hline(y=pred_A, line_dash="dash", line_color="#e74c3c", annotation_text="Target A (38.2% Fib)")
-        
-    elif active_mode == "Correction":
-        invalidation_level = w_prices[0]
-        c1.success(f"🟢 **PUMP EXPECTED (BUY SIGNAL)**")
-        c2.warning(f"❌ **Invalidation Level:** Rs {invalidation_level:.2f} (Origin Rule)")
-        
-        diff = w_prices[0] - w_prices[3]
-        fib_618 = w_prices[3] + (diff * 0.618)
-        fig.add_hline(y=fib_618, line_dash="dash", line_color="#f1c40f", annotation_text="Golden Breakout (0.618)")
-
-    # 🚀 FIX: Convert the DatetimeIndex to pure strings so Plotly doesn't crash on gaps
-    dt_breaks = pd.date_range(start=df_full['Date'].min(), end=df_full['Date'].max()).difference(df_full['Date'])
-    dt_breaks_str = dt_breaks.strftime('%Y-%m-%d').tolist()
-    
-    fig.update_xaxes(rangebreaks=[dict(values=dt_breaks_str)], rangeslider_visible=False)
-    fig.update_layout(height=650, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=30, b=10))
-    st.plotly_chart(fig, use_container_width=True)
-
 
 # --- MAIN UI ROUTING ---
 if not saved_stocks:
@@ -227,7 +197,6 @@ else:
                 if default_date < min_d:
                     default_date = min_d
                 
-                # 🚀 FIX: Explicitly enforce format and step size to prevent Streamlit internal int conflicts
                 replay_date = st.slider(
                     "Select Replay Date:", 
                     min_value=min_d, 
