@@ -173,3 +173,51 @@ else:
 
         except Exception as e:
             st.error(f"❌ Error rendering advanced analysis: {e}")
+
+
+# --- 6. VOLUME PROFILE (SUPPORT & RESISTANCE LEVELS) ---
+            st.write("---")
+            st.markdown("### 🧱 Volume Profile (Price Zones)")
+            st.caption("Identifies the exact price levels where this broker traded the most volume.")
+            
+            # Calculate an estimated combined Daily VWAP
+            df["Daily_VWAP"] = np.where(
+                df["Total_Vol"] > 0, 
+                (df["Buy_Amount"] + df["Sell_Amount"]) / df["Total_Vol"], 
+                0
+            )
+            
+            vp_df = df[df["Daily_VWAP"] > 0].copy()
+            if not vp_df.empty:
+                # Group into Price Buckets (Bins)
+                min_price = vp_df["Daily_VWAP"].min()
+                max_price = vp_df["Daily_VWAP"].max()
+                
+                # Create 15 price zones
+                bins = np.linspace(min_price, max_price, 15)
+                vp_df['Price_Zone'] = pd.cut(vp_df['Daily_VWAP'], bins=bins)
+                
+                # Aggregate Volume by Price Zone
+                profile = vp_df.groupby('Price_Zone', observed=False).agg({
+                    'Buy_Qty': 'sum', 
+                    'Sell_Qty': 'sum'
+                }).reset_index()
+                
+                profile['Price_Level'] = profile['Price_Zone'].apply(lambda x: f"Rs {int(x.mid)}" if pd.notnull(x) else "Unknown")
+                
+                # Plotly Horizontal Bar Chart
+                fig_vp = go.Figure()
+                fig_vp.add_trace(go.Bar(
+                    y=profile['Price_Level'], x=profile['Buy_Qty'], 
+                    name='Buy Volume', orientation='h', marker_color='rgba(39, 174, 96, 0.8)'
+                ))
+                fig_vp.add_trace(go.Bar(
+                    y=profile['Price_Level'], x=-profile['Sell_Qty'], 
+                    name='Sell Volume', orientation='h', marker_color='rgba(231, 76, 60, 0.8)'
+                ))
+                
+                fig_vp.update_layout(
+                    barmode='relative', title="Volume by Price Level (Find Hidden Support)",
+                    yaxis=dict(autorange="reversed"), height=500, hovermode="y unified"
+                )
+                st.plotly_chart(fig_vp, use_container_width=True)
