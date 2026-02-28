@@ -46,15 +46,18 @@ with tab1:
                 "b_amt": "Buy_Amount", "s_amt": "Sell_Amount"
             }, inplace=True, errors='ignore')
             
-            # --- 2. CALCULATE METRICS & 30-DAY AVERAGE ---
+            # --- 2. CALCULATE METRICS, 30-DAY AVG & CUMULATIVE TOTALS ---
             if "Buy_Qty" in df.columns and "Sell_Qty" in df.columns:
                 df["Net_Qty"] = df["Buy_Qty"] - df["Sell_Qty"]
+                df["Cum_Net_Qty"] = df["Net_Qty"].cumsum()  # Running total of Qty
+                
                 df["Total_Vol"] = df["Buy_Qty"] + df["Sell_Qty"]
-                # 30-Day Moving Average of Volume (min_periods=1 so it works even if <30 days)
+                # 30-Day Moving Average of Volume
                 df["Avg_30D_Vol"] = df["Total_Vol"].rolling(window=30, min_periods=1).mean()
                 
             if "Buy_Amount" in df.columns and "Sell_Amount" in df.columns:
-                df["Net_Amount"] = df["Buy_Amount"] - df["Sell_Amount"]  # Positive means money went IN (Accumulation)
+                df["Net_Amount"] = df["Buy_Amount"] - df["Sell_Amount"]  
+                df["Cum_Net_Amount"] = df["Net_Amount"].cumsum()  # Running total of Amount
 
             # --- 3. CUSTOM DATE FILTER ---
             st.write("---")
@@ -69,28 +72,28 @@ with tab1:
                 filtered_df = df.loc[mask].copy()
                 
                 # --- 4. TOTAL NET BOXES WITH COLOR ---
-                total_net_qty = filtered_df["Net_Qty"].sum()
-                total_net_amt = filtered_df["Net_Amount"].sum()
+                # Grab the final cumulative values for the period
+                final_cum_qty = filtered_df["Cum_Net_Qty"].iloc[-1] if not filtered_df.empty else 0
+                final_cum_amt = filtered_df["Cum_Net_Amount"].iloc[-1] if not filtered_df.empty else 0
                 
-                # Determine colors for summary boxes
-                qty_color = "#198754" if total_net_qty > 0 else "#dc3545" # Bootstrap Green / Red
-                amt_color = "#198754" if total_net_amt > 0 else "#dc3545"
+                qty_color = "#198754" if final_cum_qty > 0 else "#dc3545"
+                amt_color = "#198754" if final_cum_amt > 0 else "#dc3545"
                 
-                st.write("#### 📊 Total Net Summary")
+                st.write("#### 📊 Cumulative Position (End of Selected Period)")
                 c1, c2 = st.columns(2)
                 c1.markdown(f"""
                 <div style="background-color: {qty_color}; padding: 20px; border-radius: 10px; color: white; text-align: center;">
-                    <h3 style="color: white; margin:0;">Total Net Qty</h3>
-                    <h2 style="color: white; margin:0;">{total_net_qty:,.0f}</h2>
-                    <p style="margin:0;">{'🟢 Accumulating' if total_net_qty > 0 else '🔴 Distributing'}</p>
+                    <h3 style="color: white; margin:0;">Holding Inventory (Cum. Qty)</h3>
+                    <h2 style="color: white; margin:0;">{final_cum_qty:,.0f}</h2>
+                    <p style="margin:0;">{'🟢 Net Accumulator' if final_cum_qty > 0 else '🔴 Net Distributor'}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
                 c2.markdown(f"""
                 <div style="background-color: {amt_color}; padding: 20px; border-radius: 10px; color: white; text-align: center;">
-                    <h3 style="color: white; margin:0;">Total Net Amount</h3>
-                    <h2 style="color: white; margin:0;">Rs {total_net_amt:,.2f}</h2>
-                    <p style="margin:0;">{'🟢 Capital Inflow' if total_net_amt > 0 else '🔴 Capital Outflow'}</p>
+                    <h3 style="color: white; margin:0;">Net Capital Flow (Cum. Amount)</h3>
+                    <h2 style="color: white; margin:0;">Rs {final_cum_amt:,.2f}</h2>
+                    <p style="margin:0;">{'🟢 Capital Trapped/Invested' if final_cum_amt > 0 else '🔴 Capital Booked/Exited'}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -98,7 +101,6 @@ with tab1:
 
                 # --- 5. COLOR STRENGTH STYLING FUNCTION ---
                 def apply_color_strength(row):
-                    """Returns background color based on Accumulation/Distribution and Volume Aggression"""
                     net = row["Net_Qty"]
                     avg_vol = row["Avg_30D_Vol"]
                     
@@ -108,11 +110,11 @@ with tab1:
                     alpha = min(max(aggression_ratio * 0.5, 0.15), 0.85)
                     
                     if net > 0:
-                        color = f"rgba(0, 200, 0, {alpha})"  # Green
+                        color = f"rgba(0, 200, 0, {alpha})"
                     elif net < 0:
-                        color = f"rgba(255, 0, 0, {alpha})"  # Red
+                        color = f"rgba(255, 0, 0, {alpha})"
                     else:
-                        color = "rgba(128, 128, 128, 0.2)"   # Neutral Gray
+                        color = "rgba(128, 128, 128, 0.2)"
                         
                     return [f"background-color: {color}; color: white;"] * len(row)
 
@@ -120,16 +122,20 @@ with tab1:
                 display_df = filtered_df.copy()
                 display_df["Date"] = display_df["Date"].dt.strftime('%Y-%m-%d')
                 
-                fmt_df = display_df[["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount", "Avg_30D_Vol"]].copy()
+                fmt_df = display_df[["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Cum_Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount", "Cum_Net_Amount", "Avg_30D_Vol"]].copy()
                 
                 st.write("### 🧮 Detailed Breakdown (Color-coded by Aggression)")
                 styled_df = fmt_df.style.apply(apply_color_strength, axis=1)\
                                         .format({
-                                            "Buy_Qty": "{:,.0f}", "Sell_Qty": "{:,.0f}", "Net_Qty": "{:,.0f}",
-                                            "Buy_Amount": "{:,.0f}", "Sell_Amount": "{:,.0f}", "Net_Amount": "{:,.0f}",
+                                            "Buy_Qty": "{:,.0f}", "Sell_Qty": "{:,.0f}", 
+                                            "Net_Qty": "{:,.0f}", "Cum_Net_Qty": "{:,.0f}",
+                                            "Buy_Amount": "{:,.0f}", "Sell_Amount": "{:,.0f}", 
+                                            "Net_Amount": "{:,.0f}", "Cum_Net_Amount": "{:,.0f}",
                                             "Avg_30D_Vol": "{:,.0f}"
                                         })
                 st.dataframe(styled_df, use_container_width=True, height=400)
+                
+               
 
                 # --- 6. SMART MERGE & SAVE TO GITHUB ---
                 st.write("---")
