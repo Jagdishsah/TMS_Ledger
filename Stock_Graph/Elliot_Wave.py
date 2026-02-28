@@ -25,10 +25,10 @@ saved_stocks, repo = fetch_saved_stocks()
 def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
     # Slice for Replay Mode
     df = df_full[df_full['Date'].dt.date <= replay_date].copy().reset_index(drop=True)
-    future_df = df_full[df_full['Date'].dt.date > replay_date].copy() # For Ghost Candles in Replay
+    future_df = df_full[df_full['Date'].dt.date > replay_date].copy() 
     
     if len(df) < 50:
-        st.error("Not enough data to analyze.")
+        st.error("Not enough data to analyze. Need at least 50 days.")
         return
 
     # HTF Bias & OHLC Validation
@@ -44,7 +44,6 @@ def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
             if data['Low'].iloc[i] == min(data['Low'].iloc[i-order:i+order+1]):
                 lows.append((i, data['Low'].iloc[i], 'Low', data['Date'].iloc[i]))
         
-        # Unconfirmed Live Edge (Only tagged as unconfirmed)
         last_idx = len(data) - 1
         if data['High'].iloc[last_idx] >= max(data['High'].iloc[-order:]):
             highs.append((last_idx, data['High'].iloc[last_idx], 'High_Unconfirmed', data['Date'].iloc[last_idx]))
@@ -104,13 +103,14 @@ def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
     # --- PLOTTING ---
     fig = go.Figure()
     
-    # 1. Main Candles
     fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', opacity=0.8))
     
-    # 2. Replay Ghost Candles (Future data)
     if not future_df.empty:
         fig.add_trace(go.Candlestick(x=future_df['Date'], open=future_df['Open'], high=future_df['High'], low=future_df['Low'], close=future_df['Close'], increasing_line_color='rgba(128,128,128,0.3)', decreasing_line_color='rgba(128,128,128,0.3)', name='Future (Replay)'))
-        fig.add_vline(x=replay_date, line_dash="dash", line_color="white", annotation_text="Replay Present")
+        
+        # 🚀 FIX: Convert python date to a Pandas Timestamp so Plotly can do math on it!
+        replay_ts = pd.Timestamp(replay_date)
+        fig.add_vline(x=replay_ts, line_dash="dash", line_color="white", annotation_text="Replay Present")
 
     if not detected_patterns:
         st.warning("No patterns found at this sensitivity/date.")
@@ -126,40 +126,41 @@ def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
     for i, p in enumerate(last_pattern):
         is_unconfirmed = "Unconfirmed" in p[2]
         border_col = "yellow" if is_unconfirmed else color
-        fig.add_annotation(x=p[3], y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, ax=0, ay=-25 if 'High' in p[2] else 25, font=dict(color='white'), bgcolor=border_col)
+        fig.add_annotation(x=p[3], y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, ax=0, ay=-25 if 'High' in p[2] else 25, font=dict(color='black' if is_unconfirmed else 'white'), bgcolor=border_col)
 
     # --- INSTITUTIONAL ANALYSIS & INVALIDATION ---
     st.markdown(f"### 📈 AI Market Bias: {'BULLISH 🟢' if htf_bullish else 'BEARISH 🔴'} (HTF 200-SMA)")
     c1, c2 = st.columns(2)
     
     if active_mode == "Motive":
-        invalidation_level = w_prices[1] # Wave 4 cannot cross Wave 1
+        invalidation_level = w_prices[1]
         c1.error(f"🚨 **DUMP EXPECTED (TAKE PROFIT)**")
         c2.warning(f"❌ **Invalidation Level:** Rs {invalidation_level:.2f} (Overlap Rule)")
         
-        # Predict A
         pred_A = w_prices[5] - ((w_prices[5] - w_prices[0]) * 0.382)
         fig.add_hline(y=pred_A, line_dash="dash", line_color="#e74c3c", annotation_text="Target A (38.2% Fib)")
         
     elif active_mode == "Correction":
-        invalidation_level = w_prices[0] # New trend invalid if it breaks below Wave 0 start
+        invalidation_level = w_prices[0]
         c1.success(f"🟢 **PUMP EXPECTED (BUY SIGNAL)**")
         c2.warning(f"❌ **Invalidation Level:** Rs {invalidation_level:.2f} (Origin Rule)")
         
-        # Predict Wave 1/3
         diff = w_prices[0] - w_prices[3]
         fib_618 = w_prices[3] + (diff * 0.618)
         fig.add_hline(y=fib_618, line_dash="dash", line_color="#f1c40f", annotation_text="Golden Breakout (0.618)")
 
+    # 🚀 FIX: Convert the DatetimeIndex to pure strings so Plotly doesn't crash on gaps
     dt_breaks = pd.date_range(start=df_full['Date'].min(), end=df_full['Date'].max()).difference(df_full['Date'])
-    fig.update_xaxes(rangebreaks=[dict(values=dt_breaks)], rangeslider_visible=False)
+    dt_breaks_str = dt_breaks.strftime('%Y-%m-%d').tolist()
+    
+    fig.update_xaxes(rangebreaks=[dict(values=dt_breaks_str)], rangeslider_visible=False)
     fig.update_layout(height=650, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=30, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
 
 # --- MAIN UI ROUTING ---
 if not saved_stocks:
-    pass # Warning already handled
+    pass
 else:
     c_stock, c_sens, c_mode = st.columns([2, 1, 1])
     selected_stock = c_stock.selectbox("Select Stock:", saved_stocks)
@@ -188,13 +189,21 @@ else:
             min_d = df_master['Date'].min().date()
             max_d = df_master['Date'].max().date()
             
-            # 🚀 THE FIX: Using standard datetime.timedelta instead of Pandas Timedelta
-            default_date = max_d - datetime.timedelta(days=30)
-            
-            # Safety check just in case the stock has less than 30 days of data
-            if default_date < min_d:
-                default_date = min_d
-            
-            replay_date = st.slider("Select Replay Date:", min_value=min_d, max_value=max_d, value=default_date)
-            
-            run_ew_analysis(df_master, pd.to_datetime(replay_date).date(), sensitivity, wave_type)
+            if min_d >= max_d:
+                st.warning("Not enough date range to use the Replay Slider.")
+            else:
+                default_date = max_d - datetime.timedelta(days=30)
+                if default_date < min_d:
+                    default_date = min_d
+                
+                # 🚀 FIX: Explicitly enforce format and step size to prevent Streamlit internal int conflicts
+                replay_date = st.slider(
+                    "Select Replay Date:", 
+                    min_value=min_d, 
+                    max_value=max_d, 
+                    value=default_date,
+                    step=datetime.timedelta(days=1),
+                    format="YYYY-MM-DD"
+                )
+                
+                run_ew_analysis(df_master, replay_date, sensitivity, wave_type)
