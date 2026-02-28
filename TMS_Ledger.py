@@ -215,6 +215,7 @@ with st.sidebar:
         "📊 Analytics", 
         "🛠️ Manage Data",
         "📈 Data Analysis"
+        "🤖 AI Advisor"
     ])
     
     st.markdown("---")
@@ -594,6 +595,18 @@ elif menu == "📈 Data Analysis":
         st.error("❌ Could not find `Data.py`. Make sure it is in the exact same folder as this main script.")
     except Exception as e:
         st.error(f"❌ Error loading Data Analysis: {e}")
+
+
+
+
+elif menu == "🤖 AI Advisor":
+    try:
+        with open("Advisor.py", encoding="utf-8") as file:
+            code = compile(file.read(), "Advisor.py", 'exec')
+            exec(code, globals())
+    except FileNotFoundError:
+        st.error("❌ Could not find `Advisor.py`. Make sure it is in the main folder.")
+
 
 
 
