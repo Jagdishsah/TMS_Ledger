@@ -195,7 +195,7 @@ with tab2:
     st.subheader("📂 Your Saved Analyses (GitHub)")
     try:
         g = Github(st.secrets["github"]["token"]) 
-        repo = g.get_repo(st.secrets["github"]["repo"])
+        repo = g.get_repo(st.secrets["github"]["repo_name"])
         
         try:
             # Fetch folder contents from GitHub
