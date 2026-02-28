@@ -213,7 +213,8 @@ with st.sidebar:
         "✍️ New Entry", 
         "📜 Ledger History", 
         "📊 Analytics", 
-        "🛠️ Manage Data"
+        "🛠️ Manage Data",
+        "📈 Data Analysis"
     ])
     
     st.markdown("---")
@@ -571,6 +572,30 @@ elif menu == "📊 Analytics":
                     st.info("No expenses recorded.")
     else:
         st.warning("No data available to visualize.")
+
+
+## >>> PAGE: DATA ANALYSIS <<<
+elif menu == "📈 Data Analysis":
+    st.header("📈 Data Analysis")
+    
+    try:
+        # This will read and execute your separate Data.py file seamlessly
+        with open("Data.py", encoding="utf-8") as file:
+            # We use compile & exec so it shares the Streamlit environment
+            code = compile(file.read(), "Data.py", 'exec')
+            exec(code, globals())
+            
+        # NOTE: If your Data.py has a specific function you want to run instead 
+        # (like `def app():`), you can delete the 'with open...' block above and use:
+        # import Data
+        # Data.app()
+        
+    except FileNotFoundError:
+        st.error("❌ Could not find `Data.py`. Make sure it is in the exact same folder as this main script.")
+    except Exception as e:
+        st.error(f"❌ Error loading Data Analysis: {e}")
+
+
 
 ## >>> PAGE: MANAGE DATA <<<
 elif menu == "🛠️ Manage Data":
