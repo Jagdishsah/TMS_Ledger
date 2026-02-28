@@ -15,7 +15,7 @@ st.markdown("Dynamic visualizations and anomaly detection based on your selected
 def fetch_github_files():
     try:
         g = Github(st.secrets["github"]["token"]) 
-        repo = g.get_repo(st.secrets["github"]["repo"])
+        repo = g.get_repo(st.secrets["github"]["repo_name"])
         contents = repo.get_contents("Data_analysis")
         return [f.name for f in contents if f.name.endswith(".csv")], repo
     except Exception as e:
