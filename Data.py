@@ -7,7 +7,7 @@ import numpy as np
 from github import Github
 import io
 
-# Ensure the Data_analysis directory exists
+# Ensure the Data_analysis directory exists locally for temporary caching
 SAVE_DIR = "Data_analysis"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -104,11 +104,7 @@ with tab1:
                     
                     if avg_vol == 0 or pd.isna(avg_vol): return [''] * len(row)
                     
-                    # Calculate how aggressive this day was compared to the 30-day average
-                    # Ratio > 1 means higher than average volume. Cap at 2.5 for max darkness.
                     aggression_ratio = abs(net) / avg_vol 
-                    
-                    # Convert ratio to an opacity (alpha) between 0.15 (light) and 0.85 (dark)
                     alpha = min(max(aggression_ratio * 0.5, 0.15), 0.85)
                     
                     if net > 0:
@@ -124,11 +120,9 @@ with tab1:
                 display_df = filtered_df.copy()
                 display_df["Date"] = display_df["Date"].dt.strftime('%Y-%m-%d')
                 
-                # Format numbers for readability before display
                 fmt_df = display_df[["Date", "Buy_Qty", "Sell_Qty", "Net_Qty", "Buy_Amount", "Sell_Amount", "Net_Amount", "Avg_30D_Vol"]].copy()
                 
                 st.write("### 🧮 Detailed Breakdown (Color-coded by Aggression)")
-                # Apply styling
                 styled_df = fmt_df.style.apply(apply_color_strength, axis=1)\
                                         .format({
                                             "Buy_Qty": "{:,.0f}", "Sell_Qty": "{:,.0f}", "Net_Qty": "{:,.0f}",
@@ -137,7 +131,7 @@ with tab1:
                                         })
                 st.dataframe(styled_df, use_container_width=True, height=400)
 
-               # --- 6. SMART MERGE & SAVE TO GITHUB ---
+                # --- 6. SMART MERGE & SAVE TO GITHUB ---
                 st.write("---")
                 st.subheader("💾 Save to GitHub (Permanent)")
                 st.info("This will permanently merge and save the data directly to your GitHub repository.")
@@ -154,12 +148,12 @@ with tab1:
                             save_df = display_df.drop(columns=["Total_Vol", "Avg_30D_Vol"], errors='ignore')
                             
                             try:
-                                # 1. Authenticate with GitHub (Change these keys if your secrets are named differently!)
+                                # Authenticate with GitHub
                                 g = Github(st.secrets["github"]["token"]) 
                                 repo = g.get_repo(st.secrets["github"]["repo"]) 
                                 
-                                # 2. Try to fetch existing file from GitHub to merge
                                 try:
+                                    # Fetch existing file from GitHub to merge
                                     file_contents = repo.get_contents(file_path)
                                     existing_csv = file_contents.decoded_content.decode('utf-8')
                                     existing_df = pd.read_csv(io.StringIO(existing_csv))
@@ -175,7 +169,7 @@ with tab1:
                                     st.success(f"🎉 Successfully merged and saved `{save_name}.csv` to GitHub!")
                                     
                                 except Exception: 
-                                    # 3. File doesn't exist yet, create it!
+                                    # File doesn't exist yet, create it!
                                     new_csv = save_df.to_csv(index=False)
                                     repo.create_file(file_path, f"App: Created {save_name}", new_csv)
                                     st.success(f"🎉 Successfully created `{save_name}.csv` on GitHub!")
@@ -186,7 +180,15 @@ with tab1:
                                 st.error(f"❌ Failed to connect to GitHub. Error: {e}")
                         else:
                             st.error("Please provide a filename.")
-
+                            
+        # THIS WAS THE MISSING BLOCK!
+        except json.JSONDecodeError:
+            st.error("❌ The file uploaded is not a valid JSON structure.")
+        except Exception as e:
+            st.error(f"❌ An error occurred while processing the file: {e}")
+            
+    else:
+        st.info("👆 Please upload a `.txt` or `.json` file containing your broker data to begin.")
 
 # --- 7. BROWSE SAVED DATA FROM GITHUB ---
 with tab2:
