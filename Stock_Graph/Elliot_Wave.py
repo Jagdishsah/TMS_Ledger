@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 from github import Github
 import io
+import datetime
 
 st.markdown("### 🌊 Institutional Elliott Wave Engine")
 st.caption("Advanced EW analysis with Strict Rules, HTF Bias, Invalidation Levels, and Replay Backtesting.")
@@ -184,7 +185,16 @@ else:
             st.markdown("### ⏪ The Time Machine")
             st.caption("Rewind the market to a past date. The AI will make its prediction based ONLY on data up to that date, and actual future candles will appear in grey so you can backtest the prediction!")
             
-            min_d, max_d = df_master['Date'].min().date(), df_master['Date'].max().date()
-            replay_date = st.slider("Select Replay Date:", min_value=min_d, max_value=max_d, value=max_d - pd.Timedelta(days=30))
+            min_d = df_master['Date'].min().date()
+            max_d = df_master['Date'].max().date()
+            
+            # 🚀 THE FIX: Using standard datetime.timedelta instead of Pandas Timedelta
+            default_date = max_d - datetime.timedelta(days=30)
+            
+            # Safety check just in case the stock has less than 30 days of data
+            if default_date < min_d:
+                default_date = min_d
+            
+            replay_date = st.slider("Select Replay Date:", min_value=min_d, max_value=max_d, value=default_date)
             
             run_ew_analysis(df_master, pd.to_datetime(replay_date).date(), sensitivity, wave_type)
