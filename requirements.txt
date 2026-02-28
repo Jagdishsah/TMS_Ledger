@@ -4,3 +4,4 @@ requests
 beautifulsoup4
 PyGithub
 plotly
+import google.generativeai as genai
