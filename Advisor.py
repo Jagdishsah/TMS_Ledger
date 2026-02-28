@@ -23,7 +23,7 @@ except Exception as e:
 def get_repo_files():
     try:
         g = Github(st.secrets["github"]["token"]) 
-        repo = g.get_repo(st.secrets["github"]["repo"])
+        repo = g.get_repo(st.secrets["github"]["repo_name"])
         contents = repo.get_contents("Data_analysis")
         return [f.name for f in contents if f.name.endswith(".csv")], repo
     except Exception:
