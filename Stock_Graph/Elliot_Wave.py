@@ -5,11 +5,10 @@ import plotly.graph_objects as go
 from github import Github
 import io
 
-st.markdown("### 🔍 Institutional Elliott Wave Scanner")
-st.caption("This algorithmic scanner calculates local extrema (Swings) and filters them through R.N. Elliott's 3 absolute mathematical rules to find valid Motive (Impulse) 5-Wave structures.")
+st.markdown("### 🌊 Advanced Elliott Wave & Fibonacci Predictor")
+st.caption("Detects Motive Waves (1-5), Corrective Waves (A-B-C), and uses Fibonacci ratios to predict future price targets.")
 
 # --- 1. GITHUB FETCHING ---
-@st.cache_data(ttl=60)
 def fetch_saved_stocks():
     try:
         g = Github(st.secrets["github"]["token"]) 
@@ -24,22 +23,19 @@ saved_stocks, repo = fetch_saved_stocks()
 if not saved_stocks:
     st.warning("No stock data found in Cloud. Please go to the 'Stock Graph' tab and save data first!")
 else:
-    c1, c2 = st.columns([2, 1])
+    c1, c2, c3 = st.columns([2, 1, 1])
     selected_stock = c1.selectbox("Select Stock to Analyze:", saved_stocks)
-    
-    # Sensitivity controls how big a "swing" has to be to be considered a wave point.
-    swing_sensitivity = c2.number_input("Swing Sensitivity (Days)", min_value=3, max_value=20, value=5, help="Higher numbers find macro trends. Lower numbers find micro day-trading waves.")
+    swing_sensitivity = c2.number_input("Swing Sensitivity (Days)", min_value=3, max_value=20, value=5)
+    wave_type = c3.selectbox("Scan For:", ["Motive (1-2-3-4-5)", "Correction (A-B-C)"])
 
     if selected_stock:
-        # Load Data
         file_data = repo.get_contents(f"Stock_Data/{selected_stock}.csv")
         df = pd.read_csv(io.StringIO(file_data.decoded_content.decode('utf-8')))
         df["Date"] = pd.to_datetime(df["Date"])
         df = df.sort_values("Date").reset_index(drop=True)
 
-        # --- 2. THE SWING DETECTION ALGORITHM ---
+        # --- 2. SWING DETECTION ALGORITHM ---
         def find_swings(data, order):
-            """Finds local tops and bottoms to act as potential wave points."""
             highs, lows = [], []
             for i in range(order, len(data) - order):
                 if data['High'].iloc[i] == max(data['High'].iloc[i-order:i+order+1]):
@@ -47,10 +43,7 @@ else:
                 if data['Low'].iloc[i] == min(data['Low'].iloc[i-order:i+order+1]):
                     lows.append((i, data['Low'].iloc[i], 'Low', data['Date'].iloc[i]))
             
-            # Combine and sort by date index
             swings = sorted(highs + lows, key=lambda x: x[0])
-            
-            # Force alternating highs and lows (remove consecutive highs/lows)
             alternating_swings = []
             for swing in swings:
                 if not alternating_swings:
@@ -59,123 +52,125 @@ else:
                     if swing[2] != alternating_swings[-1][2]:
                         alternating_swings.append(swing)
                     else:
-                        # Keep the more extreme point if two of the same type appear sequentially
                         if swing[2] == 'High' and swing[1] > alternating_swings[-1][1]:
                             alternating_swings[-1] = swing
                         elif swing[2] == 'Low' and swing[1] < alternating_swings[-1][1]:
                             alternating_swings[-1] = swing
             return alternating_swings
 
-        # --- 3. THE ELLIOTT WAVE RULES ALGORITHM ---
-        def find_elliott_motive_waves(swings):
-            """Scans sequence of 6 points (0,1,2,3,4,5) against absolute EW Rules."""
+        # --- 3. WAVE ALGORITHMS ---
+        def find_motive_waves(swings):
+            """Finds Bullish 5-Wave structures (0-1-2-3-4-5)"""
             valid_waves = []
-            
-            # We need at least 6 points for a full 5-wave impulse (Start + 5 ends)
             for i in range(len(swings) - 5):
-                # We are looking for a Bullish Impulse (Starts with a Low)
                 if swings[i][2] == 'Low':
-                    p0 = swings[i]   # Start
-                    p1 = swings[i+1] # Wave 1 Peak
-                    p2 = swings[i+2] # Wave 2 Trough
-                    p3 = swings[i+3] # Wave 3 Peak
-                    p4 = swings[i+4] # Wave 4 Trough
-                    p5 = swings[i+5] # Wave 5 Peak
+                    p = swings[i:i+6]
+                    pr = [x[1] for x in p]
                     
-                    pr0, pr1, pr2, pr3, pr4, pr5 = p0[1], p1[1], p2[1], p3[1], p4[1], p5[1]
-                    
-                    # RULE 1: Wave 2 cannot retrace > 100% of Wave 1
-                    if pr2 <= pr0: continue
+                    # Rule 1: Wave 2 cannot retrace > 100% of Wave 1
+                    if pr[2] <= pr[0]: continue
+                    # Rule 2: Wave 4 cannot overlap Wave 1
+                    if pr[4] <= pr[1]: continue
+                    # Structure Check
+                    if pr[3] <= pr[1] or pr[5] <= pr[3]: continue
+                    # Rule 3: Wave 3 is not shortest
+                    w1, w3, w5 = pr[1]-pr[0], pr[3]-pr[2], pr[5]-pr[4]
+                    if w3 < w1 and w3 < w5: continue
                         
-                    # RULE 2: Wave 4 cannot overlap the territory of Wave 1
-                    if pr4 <= pr1: continue
-                        
-                    # Structure Check: Wave 3 must pass Wave 1, Wave 5 must pass Wave 3
-                    if pr3 <= pr1 or pr5 <= pr3: continue
-                        
-                    # RULE 3: Wave 3 cannot be the shortest motive wave
-                    w1_len = pr1 - pr0
-                    w3_len = pr3 - pr2
-                    w5_len = pr5 - pr4
-                    if w3_len < w1_len and w3_len < w5_len: continue
-                        
-                    # If it passes all strict rules, save it!
-                    valid_waves.append((p0, p1, p2, p3, p4, p5))
-                    
+                    valid_waves.append(p)
             return valid_waves
 
-        # Execute Algorithms
-        all_swings = find_swings(df, swing_sensitivity)
-        ew_patterns = find_elliott_motive_waves(all_swings)
+        def find_abc_corrections(swings):
+            """Finds Bearish A-B-C ZigZag Corrections (0-A-B-C)"""
+            valid_waves = []
+            for i in range(len(swings) - 3):
+                if swings[i][2] == 'High': # Starts after a peak
+                    p = swings[i:i+4]
+                    pr = [x[1] for x in p]
+                    
+                    # Wave A goes down
+                    if pr[1] >= pr[0]: continue
+                    # Wave B retraces part of A (but not > 100%)
+                    if pr[2] <= pr[1] or pr[2] >= pr[0]: continue
+                    # Wave C goes lower than A
+                    if pr[3] >= pr[1]: continue
+                        
+                    valid_waves.append(p)
+            return valid_waves
 
-        # --- 4. VISUALIZATION ---
-        st.write("---")
-        if not ew_patterns:
-            st.error("No valid Elliott Wave patterns detected at this sensitivity. Try adjusting the 'Swing Sensitivity' parameter.")
+        all_swings = find_swings(df, swing_sensitivity)
+        
+        if wave_type == "Motive (1-2-3-4-5)":
+            detected_patterns = find_motive_waves(all_swings)
+            labels = ['0', '1', '2', '3', '4', '5']
+            line_color = '#2ecc71'
         else:
-            st.success(f"🎯 Discovered {len(ew_patterns)} mathematically perfect Elliott Wave formations!")
+            detected_patterns = find_abc_corrections(all_swings)
+            labels = ['0', 'A', 'B', 'C']
+            line_color = '#e74c3c'
+
+        # --- 4. VISUALIZATION & PREDICTION ---
+        st.write("---")
+        if not detected_patterns:
+            st.warning(f"No valid {wave_type} patterns detected at this sensitivity. Try adjusting the sensitivity.")
+        else:
+            st.success(f"🎯 Discovered {len(detected_patterns)} valid {wave_type} formations!")
             
             fig = go.Figure()
-
-            # Base Candlestick Chart
             fig.add_trace(go.Candlestick(
                 x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-                name='Price', increasing_line_color='#26a69a', decreasing_line_color='#ef5350', opacity=0.5
+                name='Price', increasing_line_color='#26a69a', decreasing_line_color='#ef5350', opacity=0.4
             ))
 
-            # Plot the Swings (Background ZigZag)
-            swing_dates = [s[3] for s in all_swings]
-            swing_prices = [s[1] for s in all_swings]
-            fig.add_trace(go.Scatter(
-                x=swing_dates, y=swing_prices, mode='lines', 
-                line=dict(color='rgba(255, 255, 255, 0.2)', width=1, dash='dot'), 
-                name='Detected Swings', hoverinfo='skip'
-            ))
+            last_pattern = detected_patterns[-1] # Focus prediction on the most recent pattern
 
-            # Highlight Valid Elliott Waves
-            colors = ['#f1c40f', '#e67e22', '#3498db', '#9b59b6', '#2ecc71'] # Cycle colors for multiple waves
-            
-            for index, wave in enumerate(ew_patterns):
-                color = colors[index % len(colors)]
-                w_dates = [p[3] for p in wave]
-                w_prices = [p[1] for p in wave]
+            # Plot Patterns
+            for index, wave in enumerate(detected_patterns):
+                w_dates, w_prices = [p[3] for p in wave], [p[1] for p in wave]
+                fig.add_trace(go.Scatter(x=w_dates, y=w_prices, mode='lines+markers', line=dict(color=line_color, width=3), name=f'Pattern {index+1}'))
                 
-                # Draw the thick Wave Line
-                fig.add_trace(go.Scatter(
-                    x=w_dates, y=w_prices, mode='lines+markers',
-                    line=dict(color=color, width=3),
-                    marker=dict(size=8, color=color, symbol='circle'),
-                    name=f'EW Impulse {index+1}'
-                ))
-                
-                # Add Labels (0, 1, 2, 3, 4, 5)
-                labels = ['0', '1', '2', '3', '4', '5']
                 for i, p in enumerate(wave):
                     fig.add_annotation(
-                        x=p[3], y=p[1],
-                        text=f"<b>{labels[i]}</b>",
-                        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2,
-                        arrowcolor=color, ax=0, ay=-30 if p[2]=='High' else 30,
-                        font=dict(size=14, color='white'),
-                        bgcolor=color, bordercolor="white", borderwidth=1, borderpad=2
+                        x=p[3], y=p[1], text=f"<b>{labels[i]}</b>",
+                        showarrow=True, arrowhead=2, ax=0, ay=-25 if p[2]=='High' else 25,
+                        font=dict(size=12, color='white'), bgcolor=line_color
                     )
 
-            # Format Layout without Weekend Gaps
+            # --- FIBONACCI PREDICTION ENGINE ---
+            if wave_type == "Motive (1-2-3-4-5)" and len(last_pattern) == 6:
+                # Predict the incoming A-B-C correction based on the completed 5-wave
+                st.markdown("### 🔮 AI Target Predictor (Pending A-B-C Correction)")
+                p0, p1, p2, p3, p4, p5 = [x[1] for x in last_pattern]
+                
+                # Target A: Usually retraces 38.2% of the entire 0-5 impulse
+                total_motive_length = p5 - p0
+                pred_A = p5 - (total_motive_length * 0.382)
+                
+                # Target B: Usually retraces 50% to 61.8% of Wave A
+                wave_A_length = p5 - pred_A
+                pred_B_low = pred_A + (wave_A_length * 0.50)
+                pred_B_high = pred_A + (wave_A_length * 0.618)
+                
+                # Target C: Usually 100% of Wave A, projected from Wave B
+                pred_C = pred_B_high - wave_A_length
+
+                # Draw Prediction Zones on Chart
+                future_date_A = df['Date'].iloc[-1] + pd.Timedelta(days=10)
+                future_date_C = df['Date'].iloc[-1] + pd.Timedelta(days=20)
+                
+                fig.add_shape(type="rect", x0=last_pattern[-1][3], y0=pred_A*0.99, x1=future_date_A, y1=pred_A*1.01, fillcolor="rgba(231, 76, 60, 0.3)", line=dict(width=0))
+                fig.add_annotation(x=future_date_A, y=pred_A, text="<b>Predicted Target A (38.2% Fib)</b>", showarrow=False, font=dict(color="#e74c3c"))
+
+                fig.add_shape(type="rect", x0=future_date_A, y0=pred_C*0.98, x1=future_date_C, y1=pred_C*1.02, fillcolor="rgba(155, 89, 182, 0.3)", line=dict(width=0))
+                fig.add_annotation(x=future_date_C, y=pred_C, text="<b>Predicted Target C (100% Ext)</b>", showarrow=False, font=dict(color="#9b59b6"))
+                
+                c_pa, c_pb, c_pc = st.columns(3)
+                c_pa.metric("Predicted Wave A Bottom", f"Rs {pred_A:.2f}")
+                c_pb.metric("Predicted Wave B Bounce", f"Rs {pred_B_low:.2f} - {pred_B_high:.2f}")
+                c_pc.metric("Predicted Wave C Bottom", f"Rs {pred_C:.2f}")
+
+            # Formatting
             dt_breaks = pd.date_range(start=df['Date'].min(), end=df['Date'].max()).difference(df['Date'])
             fig.update_xaxes(rangebreaks=[dict(values=dt_breaks)], rangeslider_visible=False)
-            fig.update_layout(
-                height=700, template="plotly_dark", title=f"Elliott Wave Analysis: {selected_stock}",
-                hovermode="x unified", margin=dict(l=10, r=10, t=40, b=10)
-            )
-
+            fig.update_layout(height=750, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=20, b=10))
             st.plotly_chart(fig, use_container_width=True)
-            
-            with st.expander("📖 Read AI Rule Verification Report"):
-                st.write("The algorithm confirmed the following rules for the most recent wave:")
-                last_wave = ew_patterns[-1]
-                st.markdown(f"- **Rule 1 Passed:** Wave 2 low (Rs {last_wave[2][1]}) never broke below Wave 0 start (Rs {last_wave[0][1]}).")
-                st.markdown(f"- **Rule 2 Passed:** Wave 4 low (Rs {last_wave[4][1]}) never overlapped Wave 1 peak (Rs {last_wave[1][1]}).")
-                
-                w1_len = last_wave[1][1] - last_wave[0][1]
-                w3_len = last_wave[3][1] - last_wave[2][1]
-                st.markdown(f"- **Rule 3 Passed:** Wave 3 traveled Rs {w3_len:.2f}, validating it is not the shortest wave (Wave 1 traveled Rs {w1_len:.2f}).")
