@@ -149,8 +149,8 @@ with tab1:
                             
                             try:
                                 # Authenticate with GitHub
-                                g = st.secrets["auth"]["username"]
-                                repo = st.secrets["auth"]["password"]
+                                g = Github(st.secrets["github"]["token"]) 
+                                repo = g.get_repo(st.secrets["github"]["repo_name"]) 
                                 
                                 try:
                                     # Fetch existing file from GitHub to merge
