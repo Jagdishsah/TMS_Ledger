@@ -5,201 +5,186 @@ import plotly.graph_objects as go
 from github import Github
 import io
 
-st.markdown("### 🌊 AI Elliott Wave Auto-Predictor (Pro Edition)")
-st.caption("Features: Live Tracking, Volume Confirmation, Rule of Alternation, & Dynamic Fib Zones.")
+st.markdown("### 🌊 Institutional Elliott Wave Engine")
+st.caption("Advanced EW analysis with Strict Rules, HTF Bias, Invalidation Levels, and Replay Backtesting.")
 
 # --- 1. GITHUB FETCHING ---
+@st.cache_data(ttl=300)
 def fetch_saved_stocks():
     try:
         g = Github(st.secrets["github"]["token"]) 
         repo = g.get_repo(st.secrets["github"]["repo_name"])
         contents = repo.get_contents("Stock_Data")
         return [f.name.replace(".csv", "") for f in contents if f.name.endswith(".csv")], repo
-    except Exception:
-        return [], None
+    except Exception: return [], None
 
 saved_stocks, repo = fetch_saved_stocks()
 
+# --- CORE ENGINE (Reusable for Live & Replay) ---
+def run_ew_analysis(df_full, replay_date, sensitivity, wave_type):
+    # Slice for Replay Mode
+    df = df_full[df_full['Date'].dt.date <= replay_date].copy().reset_index(drop=True)
+    future_df = df_full[df_full['Date'].dt.date > replay_date].copy() # For Ghost Candles in Replay
+    
+    if len(df) < 50:
+        st.error("Not enough data to analyze.")
+        return
+
+    # HTF Bias & OHLC Validation
+    df['SMA_200'] = df['Close'].rolling(200, min_periods=50).mean()
+    htf_bullish = df['Close'].iloc[-1] > df['SMA_200'].iloc[-1]
+
+    # --- SWING DETECTION ---
+    def find_swings(data, order):
+        highs, lows = [], []
+        for i in range(order, len(data) - order):
+            if data['High'].iloc[i] == max(data['High'].iloc[i-order:i+order+1]):
+                highs.append((i, data['High'].iloc[i], 'High', data['Date'].iloc[i]))
+            if data['Low'].iloc[i] == min(data['Low'].iloc[i-order:i+order+1]):
+                lows.append((i, data['Low'].iloc[i], 'Low', data['Date'].iloc[i]))
+        
+        # Unconfirmed Live Edge (Only tagged as unconfirmed)
+        last_idx = len(data) - 1
+        if data['High'].iloc[last_idx] >= max(data['High'].iloc[-order:]):
+            highs.append((last_idx, data['High'].iloc[last_idx], 'High_Unconfirmed', data['Date'].iloc[last_idx]))
+        if data['Low'].iloc[last_idx] <= min(data['Low'].iloc[-order:]):
+            lows.append((last_idx, data['Low'].iloc[last_idx], 'Low_Unconfirmed', data['Date'].iloc[last_idx]))
+
+        swings = sorted(highs + lows, key=lambda x: x[0])
+        alt_swings = []
+        for s in swings:
+            base_type = s[2].split('_')[0]
+            if not alt_swings:
+                alt_swings.append(s)
+            elif base_type != alt_swings[-1][2].split('_')[0]:
+                alt_swings.append(s)
+            else:
+                if base_type == 'High' and s[1] > alt_swings[-1][1]: alt_swings[-1] = s
+                elif base_type == 'Low' and s[1] < alt_swings[-1][1]: alt_swings[-1] = s
+        return alt_swings
+
+    all_swings = find_swings(df, sensitivity)
+
+    # --- WAVE RULES ---
+    def find_motive_waves(swings):
+        waves = []
+        for i in range(len(swings) - 5):
+            if 'Low' in swings[i][2]:
+                p = swings[i:i+6]
+                pr = [x[1] for x in p]
+                if pr[2] <= pr[0] or pr[4] <= pr[1] or pr[3] <= pr[1] or pr[5] <= pr[3]: continue
+                if (pr[3]-pr[2]) < (pr[1]-pr[0]) and (pr[3]-pr[2]) < (pr[5]-pr[4]): continue
+                waves.append(p)
+        return waves
+
+    def find_abc_corrections(swings):
+        waves = []
+        for i in range(len(swings) - 3):
+            if 'High' in swings[i][2]: 
+                p = swings[i:i+4]
+                pr = [x[1] for x in p]
+                if pr[1] >= pr[0] or pr[2] <= pr[1] or pr[2] >= pr[0] or pr[3] >= pr[1]: continue
+                waves.append(p)
+        return waves
+
+    motives = find_motive_waves(all_swings)
+    corrections = find_abc_corrections(all_swings)
+    
+    # Mode Selection
+    if wave_type == "Auto-Predict (Last 6 Months)":
+        l_mot = motives[-1][-1][3] if motives else pd.Timestamp.min
+        l_cor = corrections[-1][-1][3] if corrections else pd.Timestamp.min
+        active_mode = "Motive" if l_mot > l_cor else "Correction" if l_cor > l_mot else "None"
+        detected_patterns = motives if active_mode == "Motive" else corrections if active_mode == "Correction" else []
+    else:
+        active_mode = "Motive" if "Motive" in wave_type else "Correction"
+        detected_patterns = motives if active_mode == "Motive" else corrections
+
+    # --- PLOTTING ---
+    fig = go.Figure()
+    
+    # 1. Main Candles
+    fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', opacity=0.8))
+    
+    # 2. Replay Ghost Candles (Future data)
+    if not future_df.empty:
+        fig.add_trace(go.Candlestick(x=future_df['Date'], open=future_df['Open'], high=future_df['High'], low=future_df['Low'], close=future_df['Close'], increasing_line_color='rgba(128,128,128,0.3)', decreasing_line_color='rgba(128,128,128,0.3)', name='Future (Replay)'))
+        fig.add_vline(x=replay_date, line_dash="dash", line_color="white", annotation_text="Replay Present")
+
+    if not detected_patterns:
+        st.warning("No patterns found at this sensitivity/date.")
+        st.plotly_chart(fig, use_container_width=True)
+        return
+
+    last_pattern = detected_patterns[-1]
+    labels = ['0', '1', '2', '3', '4', '5'] if active_mode == "Motive" else ['0', 'A', 'B', 'C']
+    color = '#2ecc71' if active_mode == "Motive" else '#e74c3c'
+    w_dates, w_prices = [p[3] for p in last_pattern], [p[1] for p in last_pattern]
+    
+    fig.add_trace(go.Scatter(x=w_dates, y=w_prices, mode='lines+markers', line=dict(color=color, width=4), name='Wave Structure'))
+    for i, p in enumerate(last_pattern):
+        is_unconfirmed = "Unconfirmed" in p[2]
+        border_col = "yellow" if is_unconfirmed else color
+        fig.add_annotation(x=p[3], y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, ax=0, ay=-25 if 'High' in p[2] else 25, font=dict(color='white'), bgcolor=border_col)
+
+    # --- INSTITUTIONAL ANALYSIS & INVALIDATION ---
+    st.markdown(f"### 📈 AI Market Bias: {'BULLISH 🟢' if htf_bullish else 'BEARISH 🔴'} (HTF 200-SMA)")
+    c1, c2 = st.columns(2)
+    
+    if active_mode == "Motive":
+        invalidation_level = w_prices[1] # Wave 4 cannot cross Wave 1
+        c1.error(f"🚨 **DUMP EXPECTED (TAKE PROFIT)**")
+        c2.warning(f"❌ **Invalidation Level:** Rs {invalidation_level:.2f} (Overlap Rule)")
+        
+        # Predict A
+        pred_A = w_prices[5] - ((w_prices[5] - w_prices[0]) * 0.382)
+        fig.add_hline(y=pred_A, line_dash="dash", line_color="#e74c3c", annotation_text="Target A (38.2% Fib)")
+        
+    elif active_mode == "Correction":
+        invalidation_level = w_prices[0] # New trend invalid if it breaks below Wave 0 start
+        c1.success(f"🟢 **PUMP EXPECTED (BUY SIGNAL)**")
+        c2.warning(f"❌ **Invalidation Level:** Rs {invalidation_level:.2f} (Origin Rule)")
+        
+        # Predict Wave 1/3
+        diff = w_prices[0] - w_prices[3]
+        fib_618 = w_prices[3] + (diff * 0.618)
+        fig.add_hline(y=fib_618, line_dash="dash", line_color="#f1c40f", annotation_text="Golden Breakout (0.618)")
+
+    dt_breaks = pd.date_range(start=df_full['Date'].min(), end=df_full['Date'].max()).difference(df_full['Date'])
+    fig.update_xaxes(rangebreaks=[dict(values=dt_breaks)], rangeslider_visible=False)
+    fig.update_layout(height=650, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=30, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# --- MAIN UI ROUTING ---
 if not saved_stocks:
-    st.warning("No stock data found in Cloud. Please go to the 'Stock Graph' tab and save data first!")
+    pass # Warning already handled
 else:
-    c1, c2, c3 = st.columns([2, 1, 1])
-    selected_stock = c1.selectbox("Select Stock to Analyze:", saved_stocks)
-    swing_sensitivity = c2.number_input("Swing Sensitivity (Days)", min_value=2, max_value=20, value=4)
-    wave_type = c3.selectbox("Scan Mode:", ["Auto-Predict (Last 6 Months)", "Motive (1-2-3-4-5)", "Correction (A-B-C)"])
+    c_stock, c_sens, c_mode = st.columns([2, 1, 1])
+    selected_stock = c_stock.selectbox("Select Stock:", saved_stocks)
+    sensitivity = c_sens.number_input("Degree (Sensitivity)", 2, 20, 4)
+    wave_type = c_mode.selectbox("Scan Mode:", ["Auto-Predict (Last 6 Months)", "Motive (1-2-3-4-5)", "Correction (A-B-C)"])
 
     if selected_stock:
         file_data = repo.get_contents(f"Stock_Data/{selected_stock}.csv")
-        df = pd.read_csv(io.StringIO(file_data.decoded_content.decode('utf-8')))
-        df["Date"] = pd.to_datetime(df["Date"])
-        df = df.sort_values("Date").reset_index(drop=True)
+        df_master = pd.read_csv(io.StringIO(file_data.decoded_content.decode('utf-8')))
+        df_master["Date"] = pd.to_datetime(df_master["Date"])
+        df_master = df_master[(df_master['High'] >= df_master['Low']) & (df_master['High'] >= df_master['Close'])].sort_values("Date").reset_index(drop=True)
+
+        if wave_type == "Auto-Predict (Last 6 Months)":
+            df_master = df_master[df_master['Date'] >= df_master['Date'].max() - pd.DateOffset(months=6)].reset_index(drop=True)
+
+        tab_live, tab_replay = st.tabs(["🔴 Live Market Scanner", "⏪ Replay & Backtester Mode"])
         
-        # Ensure Volume column exists for Whale Check
-        if 'Volume' not in df.columns and 'volume' in df.columns:
-            df['Volume'] = df['volume']
-        elif 'Volume' not in df.columns:
-            df['Volume'] = 1 # Fallback if missing
-
-        if wave_type == "Auto-Predict (Last 6 Months)":
-            six_months_ago = df['Date'].max() - pd.DateOffset(months=6)
-            df = df[df['Date'] >= six_months_ago].reset_index(drop=True)
-        elif len(df) > 500:
-            df = df.tail(500).reset_index(drop=True)
-
-        # --- 2. SWING DETECTION ALGORITHM ---
-        def find_swings(data, order):
-            highs, lows = [], []
-            for i in range(order, len(data) - order):
-                if data['High'].iloc[i] == max(data['High'].iloc[i-order:i+order+1]):
-                    highs.append((i, data['High'].iloc[i], 'High', data['Date'].iloc[i]))
-                if data['Low'].iloc[i] == min(data['Low'].iloc[i-order:i+order+1]):
-                    lows.append((i, data['Low'].iloc[i], 'Low', data['Date'].iloc[i]))
+        with tab_live:
+            st.info("Analyzing live, real-time data up to the most recent trading day.")
+            run_ew_analysis(df_master, df_master['Date'].max().date(), sensitivity, wave_type)
             
-            last_idx = len(data) - 1
-            if data['High'].iloc[last_idx] >= max(data['High'].iloc[-order:]):
-                highs.append((last_idx, data['High'].iloc[last_idx], 'High', data['Date'].iloc[last_idx]))
-            if data['Low'].iloc[last_idx] <= min(data['Low'].iloc[-order:]):
-                lows.append((last_idx, data['Low'].iloc[last_idx], 'Low', data['Date'].iloc[last_idx]))
-
-            swings = sorted(highs + lows, key=lambda x: x[0])
+        with tab_replay:
+            st.markdown("### ⏪ The Time Machine")
+            st.caption("Rewind the market to a past date. The AI will make its prediction based ONLY on data up to that date, and actual future candles will appear in grey so you can backtest the prediction!")
             
-            alternating_swings = []
-            for swing in swings:
-                if not alternating_swings:
-                    alternating_swings.append(swing)
-                else:
-                    if swing[2] != alternating_swings[-1][2]:
-                        alternating_swings.append(swing)
-                    else:
-                        if swing[2] == 'High' and swing[1] > alternating_swings[-1][1]:
-                            alternating_swings[-1] = swing
-                        elif swing[2] == 'Low' and swing[1] < alternating_swings[-1][1]:
-                            alternating_swings[-1] = swing
-            return alternating_swings
-
-        # --- 3. WAVE ALGORITHMS ---
-        def find_motive_waves(swings):
-            valid_waves = []
-            for i in range(len(swings) - 5):
-                if swings[i][2] == 'Low':
-                    p = swings[i:i+6]
-                    pr = [x[1] for x in p]
-                    if pr[2] <= pr[0] or pr[4] <= pr[1]: continue
-                    if pr[3] <= pr[1] or pr[5] <= pr[3]: continue
-                    w1, w3, w5 = pr[1]-pr[0], pr[3]-pr[2], pr[5]-pr[4]
-                    if w3 < w1 and w3 < w5: continue
-                    valid_waves.append(p)
-            return valid_waves
-
-        def find_abc_corrections(swings):
-            valid_waves = []
-            for i in range(len(swings) - 3):
-                if swings[i][2] == 'High': 
-                    p = swings[i:i+4]
-                    pr = [x[1] for x in p]
-                    if pr[1] >= pr[0] or pr[2] <= pr[1] or pr[2] >= pr[0] or pr[3] >= pr[1]: continue
-                    valid_waves.append(p)
-            return valid_waves
-
-        all_swings = find_swings(df, swing_sensitivity)
-        motives = find_motive_waves(all_swings)
-        corrections = find_abc_corrections(all_swings)
-
-        if wave_type == "Auto-Predict (Last 6 Months)":
-            last_motive_date = motives[-1][-1][3] if motives else pd.Timestamp.min
-            last_corr_date = corrections[-1][-1][3] if corrections else pd.Timestamp.min
-            active_mode = "Motive" if last_motive_date > last_corr_date else "Correction" if last_corr_date > last_motive_date else "None"
-            detected_patterns = motives if active_mode == "Motive" else corrections if active_mode == "Correction" else []
-        elif wave_type == "Motive (1-2-3-4-5)":
-            active_mode, detected_patterns = "Motive", motives
-        else:
-            active_mode, detected_patterns = "Correction", corrections
-
-        # --- 4. VISUALIZATION & AI ANALYSIS ---
-        st.write("---")
-        if not detected_patterns:
-            st.warning("No completed structures found. Try lowering Swing Sensitivity.")
-        else:
-            fig = go.Figure()
-            fig.add_trace(go.Candlestick(x=df['Date'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', opacity=0.4))
-
-            last_pattern = detected_patterns[-1]
-            labels = ['0', '1', '2', '3', '4', '5'] if active_mode == "Motive" else ['0', 'A', 'B', 'C']
-            line_color = '#2ecc71' if active_mode == "Motive" else '#e74c3c'
-
-            w_dates, w_prices = [p[3] for p in last_pattern], [p[1] for p in last_pattern]
-            fig.add_trace(go.Scatter(x=w_dates, y=w_prices, mode='lines+markers', line=dict(color=line_color, width=4), name='Completed Pattern'))
+            min_d, max_d = df_master['Date'].min().date(), df_master['Date'].max().date()
+            replay_date = st.slider("Select Replay Date:", min_value=min_d, max_value=max_d, value=max_d - pd.Timedelta(days=30))
             
-            for i, p in enumerate(last_pattern):
-                fig.add_annotation(x=p[3], y=p[1], text=f"<b>{labels[i]}</b>", showarrow=True, ax=0, ay=-25 if p[2]=='High' else 25, font=dict(color='white'), bgcolor=line_color)
-
-            current_price, current_date = df['Close'].iloc[-1], df['Date'].iloc[-1]
-            pattern_end_date, pattern_end_price = w_dates[-1], w_prices[-1]
-
-            st.markdown("### 🤖 Advanced Trading Desk Analysis")
-            confidence_score = 100
-            analysis_notes = []
-
-            # 🛠️ A. RULE OF ALTERNATION (For Motives)
-            if active_mode == "Motive":
-                w2_time = last_pattern[2][0] - last_pattern[1][0]
-                w4_time = last_pattern[4][0] - last_pattern[3][0]
-                w2_depth = (last_pattern[1][1] - last_pattern[2][1]) / (last_pattern[1][1] - last_pattern[0][1])
-                w4_depth = (last_pattern[3][1] - last_pattern[4][1]) / (last_pattern[3][1] - last_pattern[2][1])
-                
-                if abs(w2_time - w4_time) <= 2 and abs(w2_depth - w4_depth) < 0.2:
-                    confidence_score -= 20
-                    analysis_notes.append("⚠️ **Rule of Alternation Failed:** Wave 2 and Wave 4 look too similar in time and depth. This lowers the probability of a true 5-wave impulse.")
-                else:
-                    analysis_notes.append("✅ **Rule of Alternation Passed:** Wave 2 and Wave 4 show distinct behaviors (sharp vs sideways).")
-
-            # 🐋 B. VOLUME CONFIRMATION
-            if active_mode == "Motive" and df['Volume'].sum() > len(df): # basic check if volume isn't just 1s
-                vol_w1 = df['Volume'].iloc[last_pattern[0][0]:last_pattern[1][0]].mean()
-                vol_w3 = df['Volume'].iloc[last_pattern[2][0]:last_pattern[3][0]].mean()
-                
-                if vol_w3 < vol_w1:
-                    confidence_score -= 30
-                    analysis_notes.append(f"🐋 **Whale Check Failed:** Wave 3 Volume ({vol_w3:,.0f}) is lower than Wave 1 ({vol_w1:,.0f}). Warning: Weak impulse, potential fakeout.")
-                else:
-                    analysis_notes.append("✅ **Whale Check Passed:** Wave 3 shows strong volume confirmation.")
-
-            # 📏 C. FIBONACCI RETRACEMENT OVERLAYS & PREDICTIONS
-            if active_mode == "Correction":
-                if current_date > pattern_end_date and current_price > pattern_end_price:
-                    # Draw Fib lines from top of 0 to bottom of C
-                    fib_0 = w_prices[0]
-                    fib_100 = pattern_end_price
-                    diff = fib_0 - fib_100
-                    
-                    fib_618 = fib_100 + (diff * 0.618)
-                    fib_382 = fib_100 + (diff * 0.382)
-                    
-                    fig.add_hline(y=fib_618, line_dash="dot", line_color="#f39c12", annotation_text="Fib 0.618 Golden Ratio")
-                    fig.add_hline(y=fib_382, line_dash="dot", line_color="#3498db", annotation_text="Fib 0.382 Retracement")
-                    
-                    fig.add_trace(go.Scatter(x=[pattern_end_date, current_date], y=[pattern_end_price, current_price], mode='lines+markers', line=dict(color='#f1c40f', width=3, dash='dash'), name='Live Wave'))
-
-                    if current_price >= fib_618:
-                        confidence_score += 20
-                        st.success(f"🟢 **STRONG BUY: Golden Pocket Bounced!** (Confidence: {min(confidence_score, 100)}%)")
-                        analysis_notes.append("🎯 **Fib Confluence:** Price has decisively broken above the 0.618 Fibonacci retracement of the A-B-C drop. Massive bullish confirmation.")
-                    else:
-                        st.info(f"🟡 **EARLY ENTRY SIGNAL.** (Confidence: {confidence_score}%)")
-                        analysis_notes.append("⏳ Price is moving up but hasn't broken the 0.618 Golden Ratio resistance yet.")
-                else:
-                    st.info("Accumulate: Market consolidating at bottom.")
-            
-            elif active_mode == "Motive":
-                st.error(f"🚨 **SIGNAL: DUMP IN PROGRESS / TAKE PROFIT** (Confidence: {confidence_score}%)")
-                if current_date > pattern_end_date:
-                    fig.add_trace(go.Scatter(x=[pattern_end_date, current_date], y=[pattern_end_price, current_price], mode='lines+markers', line=dict(color='#e67e22', width=3, dash='dash'), name='Live Dump'))
-
-            for note in analysis_notes:
-                st.markdown(note)
-
-            # Formatting
-            dt_breaks = pd.date_range(start=df['Date'].min(), end=df['Date'].max()).difference(df['Date'])
-            fig.update_xaxes(rangebreaks=[dict(values=dt_breaks)], rangeslider_visible=False)
-            fig.update_layout(height=650, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=20, b=10))
-            st.plotly_chart(fig, use_container_width=True)
+            run_ew_analysis(df_master, pd.to_datetime(replay_date).date(), sensitivity, wave_type)
